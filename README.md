@@ -47,13 +47,15 @@
 
 ## Phạm vi đang có
 
-- **Admin:** quản lý tài khoản, vai trò/trạng thái, reset mật khẩu, audit log.
+- **Admin:** quản lý tài khoản (tạo, đổi vai trò/trạng thái, reset mật khẩu, xóa tài khoản chưa bị dữ liệu nghiệp vụ sử dụng), audit log. Tài khoản đang đăng nhập không thể tự xóa; nếu tài khoản đã được tham chiếu thì cần vô hiệu hóa thay vì xóa.
 - **Manager:** quản lý đơn, công nhân, khách hàng, máy, dây chuyền, ca, lịch; BOM, công đoạn, lỗi, hóa đơn/chi phí và AI.
 - **Worker:** xem đơn được phân công, lịch cá nhân, BOM/quy trình; ghi nhật ký sản lượng/sự cố và lỗi chất lượng.
 - **Accountant:** xem dữ liệu cần cho kế toán, lập hóa đơn/ghi thanh toán, quản lý chi phí, xem báo cáo tài chính.
-- **Customer:** chỉ xem đơn/hóa đơn của hồ sơ liên kết, tạo yêu cầu sản xuất và chỉnh/hủy đơn còn ở trạng thái chờ.
+- **Customer:** chỉ xem đơn/hóa đơn của hồ sơ liên kết, theo dõi tiến độ công đoạn, tạo yêu cầu sản xuất và chỉnh/hủy đơn còn ở trạng thái chờ.
 - API backend là nguồn kiểm soát quyền; frontend chỉ ẩn thao tác không được phép, không thay thế RBAC server-side.
 - Lịch chặn giao nhau trên cùng công nhân hoặc máy trong trạng thái đang hoạt động; PostgreSQL dùng advisory transaction lock để tuần tự hóa thao tác xếp lịch.
+- Xuất vật tư theo BOM kiểm tra tồn kho trước khi ghi giao dịch, cập nhật tồn kho nguyên tử, lưu lịch sử xuất; thiếu bất kỳ vật tư nào thì toàn bộ lần xuất bị từ chối. Không cho sửa BOM, đổi số lượng/sản phẩm hoặc hủy/xóa đơn đã xuất vật tư.
+- Tiến độ công đoạn được tính từ sản lượng đạt/lỗi lũy kế theo từng công đoạn; log không được vượt số lượng đơn. Công nhân chỉ được ghi log/sự cố cho đơn có lịch phân công.
 - Hóa đơn tính thành tiền từ số lượng đơn hàng × đơn giá dịch vụ, áp chiết khấu, theo dõi thanh toán một phần/đầy đủ; báo cáo có lọc ngày.
 - Audit log ghi nhận thay đổi chính của tài khoản, đơn hàng, kho và các module mới.
 
@@ -76,7 +78,7 @@ cd ..\frontend
 npm run build
 ```
 
-Kết quả xác minh trong phiên hoàn thiện này: **25 backend tests pass**, Python compile pass, React TypeScript/Vite production build pass; schema additive đã chạy trên PostgreSQL 16, các bảng/enum/check constraints được kiểm tra, seed chạy lại không làm tăng dữ liệu mẫu. Gemini request được kiểm thử bằng mock; không phải benchmark dịch vụ thật.
+Kết quả xác minh gần nhất: **29 backend tests pass**, Python compile pass và React TypeScript/Vite production build pass. Test kiểm tra xuất vật tư theo BOM nguyên tử/không xuất lặp, tổng hợp tiến độ công đoạn, chặn vượt sản lượng, quyền theo phân công và lỗi hóa đơn trùng đơn. Test API dùng SQLite; bảng `material_issues` và ràng buộc được xác nhận trên PostgreSQL 16 local. Gemini request được kiểm thử bằng mock; không phải benchmark dịch vụ thật.
 
 Chưa có bằng chứng đo ngưỡng CRUD `<1,5s`, Gemini `<5s`, tải đồng thời `50–100`, tỷ lệ chặn jailbreak `≥95%`, E2E trình duyệt/tablet, hoặc khôi phục backup. Không coi các mục tiêu định lượng trong báo cáo là đã đạt chỉ dựa trên unit/API tests.
 
@@ -97,7 +99,7 @@ docs/                     phân tích, yêu cầu và nhật ký bằng chứng 
 ## Giới hạn và triển khai thật
 
 - `upgrade_schema()` là migration bootstrap additive/idempotent cho thay đổi hiện có, chưa thay thế lịch sử migration có version như Alembic. Sao lưu database trước khi nâng cấp production.
-- Chưa có flow duyệt đơn đầy đủ, tiến độ phần trăm công đoạn, tự trừ kho theo BOM, kết nối gửi SMS/Zalo/email, bảo trì dự đoán, backup/restore tự động hoặc E2E/load test.
+- Chưa có flow duyệt đơn đầy đủ, tự động xuất kho khi chuyển trạng thái sản xuất (hiện quản đốc chủ động xuất theo BOM), hoàn trả vật tư đã xuất, kết nối gửi SMS/Zalo/email, bảo trì dự đoán, backup/restore tự động hoặc E2E/load test. Tiến độ phần trăm hiện là trung bình tỷ lệ hoàn tất của các công đoạn đã cấu hình; cần nghiệp vụ xác nhận đây là công thức phù hợp.
 - JWT lưu ở localStorage để demo; cần đánh giá cookie `HttpOnly`/`Secure`/`SameSite`, CSP/XSS, thu hồi token và TLS khi triển khai internet-facing.
 - Thay secrets mặc định, không dùng mật khẩu demo, bật TLS, cấu hình CORS tối thiểu và quản lý quyền DB theo nguyên tắc least privilege.
 

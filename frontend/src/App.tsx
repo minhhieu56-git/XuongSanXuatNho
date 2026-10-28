@@ -10,6 +10,7 @@ type Page = "dashboard" | "orders" | "inventory" | "ai" | "operations";
 type InventoryDraft = Omit<InventoryItem, "id" | "updated_at">;
 type OrderDraft = Pick<Order, "order_code" | "product_name" | "quantity" | "due_date" | "status" | "notes" | "material_id">;
 type ShiftOption = {id: number; name: string};
+type OrderProgress = {order_id: number; progress_percent: number};
 
 const currency = new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND", maximumFractionDigits: 0 });
 const statusNames: Record<string, string> = { planned: "Đã lên kế hoạch", in_progress: "Đang sản xuất", completed: "Hoàn thành", cancelled: "Đã hủy" };
@@ -21,6 +22,7 @@ export default function App() {
   const [page, setPage] = useState<Page>("dashboard");
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [orderProgress, setOrderProgress] = useState<Record<number, number>>({});
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -75,6 +77,22 @@ export default function App() {
   }, [token, search, statusFilter, page]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  useEffect(() => {
+    if (page !== "orders" || !token || !orders.length) {
+      setOrderProgress({});
+      return;
+    }
+    let active = true;
+    void request<OrderProgress[]>("/orders/progress", token).then(values => {
+      if (active) setOrderProgress(Object.fromEntries(values.map(progress => [
+        progress.order_id, progress.progress_percent,
+      ])));
+    }).catch(issue => {
+      if (active) setError(errorText(issue));
+    });
+    return () => { active = false; };
+  }, [orders, page, token]);
 
   async function handleLogin(event: FormEvent) {
     event.preventDefault();
@@ -184,8 +202,8 @@ export default function App() {
       <div className="brand-mark"><Boxes size={25} /></div>
       <p className="eyebrow">WORKSHOP OPERATIONS</p><h1>Quản lý xưởng<br />thông minh hơn.</h1>
       <p className="muted">Đăng nhập để theo dõi sản xuất và tồn kho.</p>
-      <label>Email<input type="email" required value={loginEmail} onChange={e => setLoginEmail(e.target.value)} /></label>
-      <label>Mật khẩu<input type="password" required minLength={8} value={loginPassword} onChange={e => setLoginPassword(e.target.value)} /></label>
+      <label>Email<input type="email" placeholder="Ví dụ: admin@example.com" required value={loginEmail} onChange={e => setLoginEmail(e.target.value)} /></label>
+      <label>Mật khẩu<input type="password" placeholder="Nhập mật khẩu được cấp" required minLength={8} value={loginPassword} onChange={e => setLoginPassword(e.target.value)} /></label>
       {error && <div className="notice error">{error}</div>}
       <button className="primary full" disabled={busy}>{busy ? "Đang đăng nhập..." : "Đăng nhập"}</button>
       <p className="hint">Demo: admin@example.com / ChangeMe123! (sau khi nạp dữ liệu mẫu)</p>
@@ -223,7 +241,7 @@ export default function App() {
         {page === "orders" && <section>
           <div className="page-heading"><div><p className="eyebrow">SẢN XUẤT</p><h1>Đơn sản xuất</h1><p className="muted">{canCustomerOrder ? "Theo dõi và gửi yêu cầu sản xuất của bạn." : "Quản lý tiến độ và kế hoạch đơn hàng."}</p></div>{(canManage || canCustomerOrder) && <button className="primary" onClick={() => {setEditingOrder(null); setShowOrderForm(true);}}><Plus size={17}/> {canCustomerOrder ? "Gửi yêu cầu sản xuất" : "Tạo đơn hàng"}</button>}</div>
           <div className="toolbar"><div className="searchbox"><Search size={17}/><input placeholder="Tìm mã đơn hoặc sản phẩm..." value={search} onChange={e => setSearch(e.target.value)}/></div><select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}><option value="">Tất cả trạng thái</option>{Object.entries(statusNames).map(([key, label]) => <option value={key} key={key}>{label}</option>)}</select></div>
-          <div className="table-card"><table><thead><tr><th>MÃ ĐƠN</th><th>SẢN PHẨM</th><th>SỐ LƯỢNG</th><th>NGUYÊN LIỆU</th><th>HẠN HOÀN THÀNH</th><th>TRẠNG THÁI</th>{(canManage || canCustomerOrder) && <th/>}</tr></thead><tbody>{orders.map(order => <tr key={order.id}><td className="strong">{order.order_code}</td><td>{order.product_name}</td><td>{order.quantity.toLocaleString("vi-VN")}</td><td>{order.material?.name ?? "—"}</td><td>{order.due_date ? new Date(order.due_date).toLocaleDateString("vi-VN") : "—"}</td><td><span className={`status ${order.status}`}>{statusNames[order.status] ?? order.status}</span></td>{canManage && <td className="row-actions"><button className="icon-btn" title="Sửa đơn" onClick={() => {setEditingOrder(order); setShowOrderForm(true);}}><Pencil size={15}/></button><button className="icon-btn danger-text" title="Xóa" onClick={() => void deleteRecord(`/orders/${order.id}`)}><Trash2 size={16}/></button></td>}{canCustomerOrder && <td className="row-actions">{order.status === "planned" && <><button className="icon-btn" title="Sửa yêu cầu" onClick={() => {setEditingOrder(order); setShowOrderForm(true);}}><Pencil size={15}/></button><button className="icon-btn danger-text" title="Hủy yêu cầu" onClick={() => void cancelCustomerOrder(order)}><X size={16}/></button></>}</td>}</tr>)}{orders.length === 0 && <tr><td colSpan={7} className="empty">Không tìm thấy đơn hàng phù hợp.</td></tr>}</tbody></table></div>
+          <div className="table-card"><table><thead><tr><th>MÃ ĐƠN</th><th>SẢN PHẨM</th><th>SỐ LƯỢNG</th><th>NGUYÊN LIỆU</th><th>TIẾN ĐỘ</th><th>HẠN HOÀN THÀNH</th><th>TRẠNG THÁI</th>{(canManage || canCustomerOrder) && <th/>}</tr></thead><tbody>{orders.map(order => <tr key={order.id}><td className="strong">{order.order_code}</td><td>{order.product_name}</td><td>{order.quantity.toLocaleString("vi-VN")}</td><td>{order.material?.name ?? "—"}</td><td>{orderProgress[order.id] == null ? "—" : `${orderProgress[order.id]}%`}</td><td>{order.due_date ? new Date(order.due_date).toLocaleDateString("vi-VN") : "—"}</td><td><span className={`status ${order.status}`}>{statusNames[order.status] ?? order.status}</span></td>{canManage && <td className="row-actions"><button className="icon-btn" title="Sửa đơn" onClick={() => {setEditingOrder(order); setShowOrderForm(true);}}><Pencil size={15}/></button><button className="icon-btn danger-text" title="Xóa đơn" onClick={() => void deleteRecord(`/orders/${order.id}`)}><Trash2 size={16}/></button></td>}{canCustomerOrder && <td className="row-actions">{order.status === "planned" && <><button className="icon-btn" title="Sửa yêu cầu" onClick={() => {setEditingOrder(order); setShowOrderForm(true);}}><Pencil size={15}/></button><button className="icon-btn danger-text" title="Hủy yêu cầu" onClick={() => void cancelCustomerOrder(order)}><X size={16}/></button></>}</td>}</tr>)}{orders.length === 0 && <tr><td colSpan={8} className="empty">Không tìm thấy đơn hàng phù hợp.</td></tr>}</tbody></table></div>
         </section>}
         {page === "inventory" && <section>
           <div className="page-heading"><div><p className="eyebrow">VẬT TƯ</p><h1>Kho nguyên liệu</h1><p className="muted">Theo dõi số lượng và cảnh báo tồn kho tối thiểu.</p></div>{canManage && <button className="primary" onClick={() => {setEditingInventory(null); setShowInventoryForm(true);}}><Plus size={17}/> Thêm nguyên liệu</button>}</div>
@@ -247,7 +265,7 @@ export default function App() {
               </select>
               {aiTask === "shift-summary" && <label>Ca làm việc<select required value={aiTaskId} onChange={event => setAiTaskId(event.target.value)}><option value="">Chọn ca</option>{shifts.map(shift => <option value={shift.id} key={shift.id}>{shift.name}</option>)}</select></label>}
               {aiTask === "customer-progress" && <label>Đơn hàng<select required value={aiTaskId} onChange={event => setAiTaskId(event.target.value)}><option value="">Chọn đơn</option>{orders.map(order => <option value={order.id} key={order.id}>{order.order_code} · {order.product_name}</option>)}</select></label>}
-              {(aiTask === "analysis" || aiTask === "technical-explanation") && <><label htmlFor="question">{aiTask === "analysis" ? "Câu hỏi của bạn" : "Tên sản phẩm"}</label><textarea id="question" minLength={aiTask === "analysis" ? 5 : 1} maxLength={1000} value={aiQuestion} onChange={e => setAiQuestion(e.target.value)} required/>
+              {(aiTask === "analysis" || aiTask === "technical-explanation") && <><label htmlFor="question">{aiTask === "analysis" ? "Câu hỏi của bạn" : "Tên sản phẩm"}</label><textarea id="question" placeholder={aiTask === "analysis" ? "Ví dụ: Nguyên liệu nào đang dưới mức tồn tối thiểu?" : "Ví dụ: Bàn gỗ 120 cm"} minLength={aiTask === "analysis" ? 5 : 1} maxLength={1000} value={aiQuestion} onChange={e => setAiQuestion(e.target.value)} required/>
                 {aiTask === "analysis" && <div className="prompt-suggestions"><span>Gợi ý:</span><button type="button" onClick={() => setAiQuestion("Nguyên liệu nào đang dưới mức tồn tối thiểu?")}>Kiểm tra tồn kho thấp</button><button type="button" onClick={() => setAiQuestion("Tóm tắt các đơn hàng cần ưu tiên theo hạn hoàn thành.")}>Ưu tiên đơn hàng</button></div>}</>}
               <button className="primary" disabled={busy}><Sparkles size={16}/>{busy ? "Đang phân tích..." : "Tạo kết quả AI"}</button>
             </form>
@@ -258,14 +276,14 @@ export default function App() {
       </section>
     </main>
     {showOrderForm && <Modal title={editingOrder ? "Cập nhật đơn sản xuất" : "Tạo đơn sản xuất"} close={() => {setShowOrderForm(false); setEditingOrder(null);}} onSubmit={saveOrder} busy={busy}>
-      <div className="form-grid">{!canCustomerOrder && <label>Mã đơn<input name="order_code" required maxLength={40} placeholder="PX-2026-004" defaultValue={editingOrder?.order_code ?? ""}/></label>}<label>Tên sản phẩm<input name="product_name" required maxLength={160} defaultValue={editingOrder?.product_name ?? ""}/></label><label>Số lượng<input name="quantity" type="number" min="1" required defaultValue={editingOrder?.quantity ?? ""}/></label><label>Hạn hoàn thành<input name="due_date" type="date" defaultValue={editingOrder?.due_date ? new Date(editingOrder.due_date).toISOString().slice(0, 10) : ""}/></label>{!canCustomerOrder && <><label>Trạng thái<select name="status" defaultValue={editingOrder?.status ?? "planned"}>{Object.entries(statusNames).map(([key, label]) => <option value={key} key={key}>{label}</option>)}</select></label><label>Nguyên liệu liên quan<select name="material_id" defaultValue={editingOrder?.material_id ?? ""}><option value="">Không chọn</option>{inventory.map(item => <option value={item.id} key={item.id}>{item.name} ({item.sku})</option>)}</select></label></>}<label className="span-two">Ghi chú<textarea name="notes" maxLength={4000} defaultValue={editingOrder?.notes ?? ""}/></label></div>
+      <div className="form-grid">{!canCustomerOrder && <label>Mã đơn<input name="order_code" required maxLength={40} placeholder="Ví dụ: PX-2026-004" defaultValue={editingOrder?.order_code ?? ""}/></label>}<label>Tên sản phẩm<input name="product_name" required maxLength={160} placeholder="Ví dụ: Bàn gỗ 120 cm" defaultValue={editingOrder?.product_name ?? ""}/></label><label>Số lượng<input name="quantity" type="number" min="1" placeholder="Ví dụ: 25" required defaultValue={editingOrder?.quantity ?? ""}/></label><label>Hạn hoàn thành<input name="due_date" type="date" defaultValue={editingOrder?.due_date ? new Date(editingOrder.due_date).toISOString().slice(0, 10) : ""}/></label>{!canCustomerOrder && <><label>Trạng thái<select name="status" defaultValue={editingOrder?.status ?? "planned"}>{Object.entries(statusNames).map(([key, label]) => <option value={key} key={key}>{label}</option>)}</select></label><label>Nguyên liệu liên quan<select name="material_id" defaultValue={editingOrder?.material_id ?? ""}><option value="">Không chọn</option>{inventory.map(item => <option value={item.id} key={item.id}>{item.name} ({item.sku})</option>)}</select></label></>}<label className="span-two">Ghi chú<textarea name="notes" placeholder="Ví dụ: Giao hàng tại xưởng khách trước ngày 30/11" maxLength={4000} defaultValue={editingOrder?.notes ?? ""}/></label></div>
     </Modal>}
     {showInventoryForm && <Modal title={editingInventory ? "Cập nhật nguyên liệu" : "Thêm nguyên liệu"} close={() => {setShowInventoryForm(false); setEditingInventory(null);}} onSubmit={saveInventory} busy={busy}>
-      <div className="form-grid"><label>SKU<input name="sku" required maxLength={40} defaultValue={editingInventory?.sku ?? ""}/></label><label>Tên nguyên liệu<input name="name" required maxLength={160} defaultValue={editingInventory?.name ?? ""}/></label><label>Đơn vị<input name="unit" required maxLength={30} placeholder="kg, cái, lít" defaultValue={editingInventory?.unit ?? ""}/></label><label>Số lượng hiện có<input name="quantity" type="number" step="0.01" min="0" required defaultValue={editingInventory?.quantity ?? ""}/></label><label>Mức tồn tối thiểu<input name="minimum_quantity" type="number" step="0.01" min="0" required defaultValue={editingInventory?.minimum_quantity ?? ""}/></label><label>Đơn giá (VND)<input name="unit_cost" type="number" step="0.01" min="0" required defaultValue={editingInventory?.unit_cost ?? ""}/></label></div>
+      <div className="form-grid"><label>SKU<input name="sku" required maxLength={40} placeholder="Ví dụ: VL-001" defaultValue={editingInventory?.sku ?? ""}/></label><label>Tên nguyên liệu<input name="name" required maxLength={160} placeholder="Ví dụ: Gỗ sồi" defaultValue={editingInventory?.name ?? ""}/></label><label>Đơn vị<input name="unit" required maxLength={30} placeholder="Ví dụ: kg, cái, lít" defaultValue={editingInventory?.unit ?? ""}/></label><label>Số lượng hiện có<input name="quantity" type="number" step="0.01" min="0" placeholder="Ví dụ: 120.5" required defaultValue={editingInventory?.quantity ?? ""}/></label><label>Mức tồn tối thiểu<input name="minimum_quantity" type="number" step="0.01" min="0" placeholder="Ví dụ: 20" required defaultValue={editingInventory?.minimum_quantity ?? ""}/></label><label>Đơn giá (VND)<input name="unit_cost" type="number" step="0.01" min="0" placeholder="Ví dụ: 85000" required defaultValue={editingInventory?.unit_cost ?? ""}/></label></div>
     </Modal>}
     {showPasswordForm && <Modal title="Đổi mật khẩu" close={() => setShowPasswordForm(false)} onSubmit={changePassword} busy={busy}>
-      <div className="form-grid"><label className="span-two">Mật khẩu hiện tại<input name="current_password" type="password" autoComplete="current-password" minLength={8} required/></label>
-        <label className="span-two">Mật khẩu mới<input name="new_password" type="password" autoComplete="new-password" minLength={12} required/></label></div>
+      <div className="form-grid"><label className="span-two">Mật khẩu hiện tại<input name="current_password" type="password" placeholder="Nhập mật khẩu hiện tại" autoComplete="current-password" minLength={8} required/></label>
+        <label className="span-two">Mật khẩu mới<input name="new_password" type="password" placeholder="Tối thiểu 12 ký tự" autoComplete="new-password" minLength={12} required/></label></div>
     </Modal>}
   </div>;
 }

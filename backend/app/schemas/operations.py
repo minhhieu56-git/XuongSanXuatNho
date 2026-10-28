@@ -144,6 +144,26 @@ class BOMOut(BOMWrite, ORMModel):
     material: MaterialReferenceOut | None = None
 
 
+class MaterialRequirementOut(BaseModel):
+    material_id: int
+    sku: str
+    material_name: str
+    unit: str
+    required_quantity: Decimal
+    issued_quantity: Decimal
+    remaining_quantity: Decimal
+    available_quantity: Decimal
+
+
+class MaterialIssueOut(ORMModel):
+    id: int
+    order_id: int
+    material_id: int
+    quantity: Decimal
+    issued_by_id: int
+    issued_at: datetime
+
+
 class OperationWrite(BaseModel):
     order_id: int
     stage_name: str = Field(min_length=1, max_length=120)
@@ -156,6 +176,17 @@ class OperationWrite(BaseModel):
 
 class OperationOut(OperationWrite, ORMModel):
     id: int
+
+
+class OrderProgressOut(BaseModel):
+    order_id: int
+    order_code: str
+    status: str
+    target_quantity: int
+    completed_quantity: int
+    rejected_quantity: int
+    progress_percent: float
+    operations: list[OperationOut]
 
 
 class ProductionLogWrite(BaseModel):

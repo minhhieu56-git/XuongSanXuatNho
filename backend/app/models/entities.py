@@ -217,6 +217,22 @@ class BOMItem(Base):
     material: Mapped["InventoryItem"] = relationship()
 
 
+class MaterialIssue(Base):
+    __tablename__ = "material_issues"
+    __table_args__ = (
+        CheckConstraint("quantity > 0", name="ck_material_issue_quantity_positive"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("production_orders.id", ondelete="RESTRICT"), index=True)
+    material_id: Mapped[int] = mapped_column(ForeignKey("inventory_items.id", ondelete="RESTRICT"), index=True)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    issued_by_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
+    order: Mapped[ProductionOrder] = relationship()
+    material: Mapped["InventoryItem"] = relationship()
+
+
 class ProductionOperation(Base):
     __tablename__ = "production_operations"
     __table_args__ = (

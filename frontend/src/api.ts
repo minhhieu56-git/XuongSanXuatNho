@@ -21,18 +21,45 @@ export class ApiError extends Error {
   }
 }
 
+function formatApiDetail(detail: unknown): string {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail.map(item => {
+      if (typeof item === "string") return item;
+      if (item && typeof item === "object") {
+        const error = item as {loc?: unknown[]; msg?: unknown};
+        const location = Array.isArray(error.loc) ? error.loc.slice(1).join(".") : "";
+        const message = typeof error.msg === "string" ? error.msg : "Dữ liệu không hợp lệ.";
+        return location ? `${location}: ${message}` : message;
+      }
+      return String(item);
+    }).join("; ");
+  }
+  if (detail && typeof detail === "object") {
+    const error = detail as {msg?: unknown; message?: unknown};
+    if (typeof error.msg === "string") return error.msg;
+    if (typeof error.message === "string") return error.message;
+  }
+  return "Không thể hoàn thành yêu cầu.";
+}
+
 export async function request<T>(path: string, token: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, {
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}${path}`, {
     ...options,
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
       ...options.headers,
     },
-  });
+    });
+  } catch {
+    throw new Error("Không kết nối được backend. Hãy kiểm tra backend đang chạy rồi nhấn Tải lại.");
+  }
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw new ApiError(body.detail ?? "Không thể hoàn thành yêu cầu.", response.status);
+    throw new ApiError(formatApiDetail(body.detail), response.status);
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
@@ -53,7 +80,7 @@ export async function login(email: string, password: string): Promise<{ access_t
     let detail = "Đăng nhập thất bại.";
     try {
       const body = await response.json();
-      detail = body.detail ?? detail;
+      detail = formatApiDetail(body.detail);
     } catch {
       detail = `Máy chủ trả lỗi HTTP ${response.status}. Hãy kiểm tra backend đang chạy đúng dự án.`;
     }

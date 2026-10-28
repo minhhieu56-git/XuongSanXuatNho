@@ -48,7 +48,7 @@ Tài liệu có chỗ nói RBAC 4 vai trò, chỗ khác xác định 5 vai trò.
 | FR-AUTH-02 | Đăng xuất. | **Đáp ứng một phần:** UI xóa JWT phía trình duyệt; không có thu hồi token/session phía server. |
 | FR-AUTH-03 | Đổi mật khẩu và khôi phục/cấp lại mật khẩu. | **Đáp ứng một phần:** User đổi mật khẩu bằng mật khẩu hiện tại; admin reset mật khẩu qua màn hình tài khoản. Chưa có luồng quên mật khẩu/email reset. |
 | FR-AUTH-04 | RBAC chi tiết theo quyền xem/thêm/sửa/xóa và 5 actor. | **Đáp ứng một phần:** Đã có 5 role và kiểm tra quyền/scope ở backend, gồm dữ liệu riêng của customer/worker. Ma trận chưa cấu hình động; một số quyền đọc vẫn có thể tinh chỉnh. Xem [entities.py](../backend/app/models/entities.py), [operations.py](../backend/app/api/operations.py). |
-| FR-AUTH-05 | Admin tạo tài khoản, cấp lại mật khẩu, khóa/mở khóa user. | **Đáp ứng:** API/UI admin tạo tài khoản, cập nhật role/trạng thái và reset mật khẩu; không thể tự hạ quyền/vô hiệu hóa tài khoản admin đang dùng. |
+| FR-AUTH-05 | Admin tạo tài khoản, cấp lại mật khẩu, khóa/mở khóa user. | **Đáp ứng:** API/UI admin tạo tài khoản, cập nhật role/trạng thái, reset mật khẩu và xóa tài khoản chưa bị dữ liệu nghiệp vụ tham chiếu; không thể tự xóa, tự hạ quyền hoặc tự vô hiệu hóa tài khoản đang đăng nhập. |
 | FR-AUTH-06 | Ghi Audit Logs để truy vết thao tác. | **Đáp ứng một phần:** Có bảng/model, admin xem log và ghi nhận các thay đổi tài khoản/đơn/kho/module mới. Chưa phải audit trail bất biến/toàn diện; đăng nhập và một số luồng đọc không ghi log. |
 | FR-AUTH-07 | Cấu hình các danh mục dùng chung/thông số hệ thống. | **Chưa đáp ứng:** Chưa có module cấu hình danh mục công đoạn, thông số kỹ thuật hoặc cài đặt nghiệp vụ. |
 
@@ -78,9 +78,10 @@ Tài liệu có chỗ nói RBAC 4 vai trò, chỗ khác xác định 5 vai trò.
 | ID | Yêu cầu trích xuất | Đối chiếu code hiện tại |
 |---|---|---|
 | FR-PROD-01 | Theo dõi công đoạn (ví dụ cắt, phay/gia công, lắp ráp, sơn, KCS). | **Đáp ứng một phần:** Có công đoạn theo thứ tự trên đơn, trạng thái và hướng dẫn; chưa có theo dõi thời lượng/định mức thời gian và quy trình nhiều phiên bản. |
-| FR-PROD-02 | Công nhân nhập sản lượng đạt và sản lượng lỗi/KCS theo ca/công đoạn. | **Đáp ứng một phần:** Công nhân ghi sản lượng đạt/lỗi theo đơn/công đoạn/ca; operation được cập nhật tổng lũy kế. Chưa có dashboard tỷ lệ lỗi hoặc đơn vị KCS độc lập. |
+| FR-PROD-02 | Công nhân nhập sản lượng đạt và sản lượng lỗi/KCS theo ca/công đoạn. | **Đáp ứng một phần:** Công nhân được phân công ghi sản lượng đạt/lỗi theo đơn/công đoạn/ca; backend chặn ghi ngoài đơn phân công và chặn vượt số lượng đơn theo công đoạn. Chưa có dashboard tỷ lệ lỗi hoặc đơn vị KCS độc lập. |
 | FR-PROD-03 | Ghi nhật ký vận hành, ghi chú ca, sự cố hỏng máy, thiếu vật tư/gián đoạn. | **Đáp ứng một phần:** Có nhật ký theo ca, worker, máy, ghi chú/loại sự cố; chưa có workflow xử lý sự cố/ảnh đính kèm. |
-| FR-PROD-04 | Quản lý BOM: vật tư, đơn vị, đơn giá nhập, định mức tiêu hao trên mỗi sản phẩm và tiêu hao thực tế. | **Đáp ứng một phần:** BOM liên kết vật tư và định mức trên đơn vị sản phẩm; đơn vị/giá nằm trong kho. Chưa có giao dịch tiêu hao thực tế/tự động trừ tồn. |
+| FR-PROD-04 | Quản lý BOM: vật tư, đơn vị, đơn giá nhập, định mức tiêu hao trên mỗi sản phẩm và tiêu hao thực tế. | **Đáp ứng một phần:** BOM liên kết vật tư và định mức; quản đốc có thể xuất phần vật tư còn thiếu theo BOM, kiểm tra tồn kho nguyên tử, trừ tồn và lưu lịch sử xuất. Thiếu một vật tư thì toàn bộ giao dịch bị từ chối. Chưa có xuất từng phần, hoàn trả vật tư hoặc tính giá thành tự động. |
+| FR-PROD-06 | Theo dõi tỷ lệ hoàn thành công đoạn và tiến độ đơn. | **Đáp ứng một phần:** API tính tiến độ trung bình từ sản lượng đạt/lỗi của các công đoạn; khách hàng xem phần trăm trong danh sách đơn và AI bản nháp được cấp cùng tiến độ. Công thức trung bình cần chủ sản phẩm xác nhận; chưa có biểu đồ/timeline hoặc tiến độ theo thời gian. |
 | FR-PROD-05 | KCS, trạng thái máy, thiếu hụt vật tư và sự cố được thể hiện để quản đốc xử lý. | **Đáp ứng một phần:** Có trạng thái máy, cảnh báo tồn, defect và nhật ký sự cố; chưa có workflow KCS/khắc phục hoặc bảo trì. |
 
 ### 4.5. Tài chính, hóa đơn, thanh toán và báo cáo
@@ -90,7 +91,7 @@ Tài liệu có chỗ nói RBAC 4 vai trò, chỗ khác xác định 5 vai trò.
 | FR-FIN-01 | Lập hóa đơn từ số lượng hoàn thành, đơn giá gia công và chi phí BOM. | **Đáp ứng một phần:** Hóa đơn tính số lượng đơn × đơn giá dịch vụ, chiết khấu; chưa gộp chi phí BOM/tự động tính từ sản lượng hoàn thành. |
 | FR-FIN-02 | Chiết khấu/giảm giá, phương thức tiền mặt/chuyển khoản, trạng thái thanh toán/công nợ. | **Đáp ứng một phần:** Có chiết khấu, tiền mặt/chuyển khoản, thanh toán một phần/đầy đủ và chặn vượt số dư. Chưa hỗ trợ hoàn tiền/void giao dịch đã thu. |
 | FR-FIN-03 | Báo cáo doanh thu ngày/tháng/năm. | **Đáp ứng một phần:** Có API/UI báo cáo hóa đơn, doanh thu đã lập/đã thu/còn phải thu/chi phí, lọc ngày tùy chọn. Chưa có preset lịch tháng/năm, export hoặc đối soát. |
-| FR-FIN-04 | Báo cáo chi phí vật tư, sản lượng, tỷ lệ lỗi KCS và hiệu suất máy. | **Đáp ứng một phần:** Có báo cáo khoản chi và nhật ký sản lượng/lỗi; chưa có báo cáo hiệu suất máy, chi phí vật tư BOM thực tế hoặc tỷ lệ lỗi tổng hợp. |
+| FR-FIN-04 | Báo cáo chi phí vật tư, sản lượng, tỷ lệ lỗi KCS và hiệu suất máy. | **Đáp ứng một phần:** Có báo cáo khoản chi, nhật ký sản lượng/lỗi và lịch sử xuất vật tư; chưa có quy đổi chi phí xuất vật tư, báo cáo hiệu suất máy hoặc tỷ lệ lỗi tổng hợp. |
 | FR-FIN-05 | Kế toán xem/xác nhận giao dịch thanh toán. | **Đáp ứng một phần:** Role accountant được tạo/xem thanh toán và hóa đơn qua backend/UI; chưa có workflow đối soát/xác nhận ngân hàng. |
 
 ### 4.6. Chức năng AI nghiệp vụ
@@ -98,7 +99,7 @@ Tài liệu có chỗ nói RBAC 4 vai trò, chỗ khác xác định 5 vai trò.
 | ID | Yêu cầu trích xuất | Đối chiếu code hiện tại |
 |---|---|---|
 | FR-AI-01 | Tóm tắt nhật ký ca thành báo cáo sản lượng đạt/lỗi, sự cố thiết bị và đề xuất xử lý cho quản đốc. | **Đáp ứng một phần:** Endpoint/prompt/UI tóm tắt nhật ký theo ca; dữ liệu tối đa 100 log và chưa có workflow phê duyệt báo cáo hay kiểm thử Gemini thật trong phiên này. |
-| FR-AI-02 | Sinh tin nhắn tiến độ cá nhân hóa gồm % công đoạn/ngày giao dự kiến để quản đốc duyệt trước khi gửi Zalo/SMS/Email. | **Đáp ứng một phần:** Sinh bản nháp dựa trên trạng thái/số lượng/hạn đơn, disclaimer yêu cầu kiểm duyệt; chưa tính % công đoạn, lưu bản nháp/duyệt hoặc tích hợp gửi kênh. |
+| FR-AI-02 | Sinh tin nhắn tiến độ cá nhân hóa gồm % công đoạn/ngày giao dự kiến để quản đốc duyệt trước khi gửi Zalo/SMS/Email. | **Đáp ứng một phần:** Sinh bản nháp có tiến độ phần trăm từ các công đoạn, trạng thái và hạn đơn; yêu cầu kiểm duyệt. Chưa lưu phiên bản/duyệt, chưa tích hợp gửi kênh và không dự đoán ngày hoàn thành. |
 | FR-AI-03 | Giải thích quy trình kỹ thuật, thông số vận hành và BOM bằng ngôn ngữ dễ hiểu; kèm technical disclaimer. | **Đáp ứng một phần:** Prompt riêng lấy dữ liệu BOM/công đoạn và có cảnh báo chuyên môn; chất lượng đầu ra chưa được đánh giá chuyên gia, không cung cấp thông số an toàn chưa cấu hình. |
 | FR-AI-04 | Hỏi đáp/nhận xét tình hình đơn và tồn kho từ dữ liệu hệ thống. | **Đáp ứng:** Có AI analysis đọc dữ liệu tồn kho/đơn qua [gemini.py](../backend/app/services/gemini.py), UI tại [App.tsx](../frontend/src/App.tsx). |
 | FR-AI-05 | Trợ lý AI chỉ hỗ trợ; không tự ghi hoặc thay đổi nghiệp vụ. | **Đáp ứng:** Endpoint AI chỉ đọc context và trả lời; không có công cụ ghi dữ liệu được cấp cho model. |
@@ -135,7 +136,7 @@ Các sơ đồ hình còn thể hiện use case ngoài phần mô tả chức n�
 | Google Gemini API. | **Đáp ứng:** Tích hợp server-side `generateContent`; model lấy từ cấu hình môi trường. Việc quyền/model có thể phụ thuộc API key. |
 | REST API giữa frontend/backend và dịch vụ AI. | **Đáp ứng một phần:** Có JSON API, frontend proxy và HTTP Gemini. HTTPS giữa browser/API chỉ có thể được đảm bảo khi triển khai sau TLS termination; dev local dùng HTTP. |
 | Docker đóng gói hệ thống. | **Chưa triển khai trong phạm vi lần này:** Người dùng yêu cầu không dùng Docker Compose; backend/frontend không có Dockerfile. |
-| Lưu trữ tập trung dữ liệu user, worker, customer, machines, lines, schedules, orders, logs/details, materials/BOM, invoices, audit logs. | **Đáp ứng một phần:** Các entity nêu trên đã có trong SQLAlchemy/PostgreSQL; chưa có giao dịch tiêu hao BOM và audit trail bất biến/toàn diện. |
+| Lưu trữ tập trung dữ liệu user, worker, customer, machines, lines, schedules, orders, logs/details, materials/BOM, invoices, audit logs. | **Đáp ứng một phần:** Các entity nêu trên cùng lịch sử xuất vật tư theo đơn đã có trong SQLAlchemy/PostgreSQL; audit trail vẫn chưa bất biến/toàn diện. |
 
 ## 6. Yêu cầu AI, prompt và bảo vệ dữ liệu
 
@@ -239,9 +240,9 @@ Báo cáo ghi CRUD trung bình `0,85 giây`, GenAI trung bình `2,6 giây`, mask
 
 ### 9.3. Test hiện có trong repository
 
-Trong [test_api.py](../backend/tests/test_api.py) có 25 API tests: health/login/change-password, RBAC 5 role và customer scope, CRUD đơn/kho, user/audit, worker/máy/dây chuyền/ca/lịch overlap, BOM/công đoạn/log/defect, invoice/payment/expense/financial report, AI fallback/task, PII masking mock, prompt-injection mẫu, context quá lớn và lỗi Gemini.
+Trong [test_api.py](../backend/tests/test_api.py) có 30 API tests: health/login/change-password, RBAC 5 role và customer scope, CRUD đơn/kho, user/audit (gồm tạo, cập nhật và xóa tài khoản với kiểm tra quyền), worker/máy/dây chuyền/ca/lịch overlap, BOM/xuất vật tư/công đoạn/log/defect/tiến độ, invoice/payment/expense/financial report và duplicate invoice, AI fallback/task, PII masking mock, prompt-injection mẫu, context quá lớn và lỗi Gemini.
 
-Kết quả xác minh phiên triển khai: **25 backend tests pass**, Python `compileall` pass, frontend `npm run build` pass; additive schema, enum role, invoice checks và demo seed được kiểm tra trên PostgreSQL 16 thực tế. Seed chạy lặp không làm tăng các bảng mẫu đã kiểm tra. Đây không phải benchmark, full E2E, đánh giá model Gemini thật, red-team coverage hay kiểm thử đồng thời.
+Kết quả xác minh gần nhất: **30 backend tests pass**, Python `compileall` pass, frontend `npm run build` pass; bảng `material_issues` và check constraint xuất vật tư được kiểm tra trên PostgreSQL 16 thực tế. Các schema/enum/invoice checks và demo seed đã được kiểm tra trong phiên triển khai trước. Đây không phải benchmark, full E2E, đánh giá model Gemini thật, red-team coverage hay kiểm thử đồng thời.
 
 ## 10. Kế hoạch triển khai 9 tuần trong báo cáo
 
@@ -250,10 +251,10 @@ Kết quả xác minh phiên triển khai: **25 backend tests pass**, Python `co
 | Tuần 1–2: khảo sát/thiết kế | Khảo sát nghiệp vụ, dùng AI hỗ trợ yêu cầu/use case; thiết kế ERD, DDL, seed, wireframe; hoàn thành mốc KT1. | Có tài liệu phân tích và code MVP; không có bằng chứng tái lập cho toàn bộ lịch sử AI/KT1; ERD trong DOCX có điểm không nhất quán. |
 | Tuần 3: nền tảng | FastAPI, PostgreSQL, React; CRUD công nhân/máy/khách hàng; UI RBAC 5 role. | Có các entity/API/UI, năm role và backend guards; chưa có ma trận quyền động hoặc review độc lập. |
 | Tuần 4: đơn và điều độ | Đặt/duyệt đơn, lệnh sản xuất, BOM, phân công; thuật toán chặn lịch trùng. | Có customer order flow cơ bản, BOM, schedule và overlap validation; chưa có duyệt đơn/lệnh riêng hoặc concurrent load test. |
-| Tuần 5: tiến độ/tài chính | Ghi nhận sản lượng, sự cố; hóa đơn/chi phí/thống kê; unit test, KT2. | Có log/defect/invoice/payment/expense/financial report và API tests; chưa có tiêu hao BOM tự động, KCS đầy đủ hoặc báo cáo hiệu suất máy. |
+| Tuần 5: tiến độ/tài chính | Ghi nhận sản lượng, sự cố; hóa đơn/chi phí/thống kê; unit test, KT2. | Có log/defect/invoice/payment/expense/financial report, xuất vật tư từ BOM và API tests; chưa có hoàn trả vật tư, KCS đầy đủ hoặc báo cáo hiệu suất máy. |
 | Tuần 6: AI và privacy | Gemini, PII masking, prompt cho tóm tắt ca/thông báo/kỹ thuật và disclaimer. | Có ba prompt nghiệp vụ, data minimization/masking heuristic và disclaimer; chưa chứng minh PII 100% hoặc kiểm nghiệm Gemini thật. |
 | Tuần 7: an toàn AI | Red-team jailbreak, tối ưu prompt, UI kết quả, KT3. | Có bộ lọc heuristic và test mẫu injection; chưa có red-team dataset/metric 95% hoặc 3 vòng tối ưu được ghi bằng chứng. |
-| Tuần 8: kiểm thử tích hợp | E2E toàn bộ luồng nghiệp vụ, bug fixing, hiệu năng, UX và báo cáo rủi ro AI. | 25 API tests và production build pass; chưa có E2E trình duyệt, load test hoặc benchmark. |
+| Tuần 8: kiểm thử tích hợp | E2E toàn bộ luồng nghiệp vụ, bug fixing, hiệu năng, UX và báo cáo rủi ro AI. | 29 API tests và production build pass; chưa có E2E trình duyệt, load test hoặc benchmark. |
 | Tuần 9: triển khai | Dockerize, setup/triển khai, tài liệu và nghiệm thu. | README và seed/migration bootstrap có; Docker Compose không dùng theo yêu cầu, chưa có Dockerfile/TLS/deployment pipeline. |
 
 Kế hoạch nguồn đặt thời gian 27/07/2026–27/09/2026, 9 tuần và 2 thành viên kiêm nhiệm.

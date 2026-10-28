@@ -1,5 +1,5 @@
 from datetime import date, datetime, time, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_UP
 
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import func, or_, select, text
@@ -15,6 +15,7 @@ from app.models import (
     Expense,
     InventoryItem,
     Invoice,
+    MaterialIssue,
     Machine,
     Payment,
     ProductionLine,
@@ -51,10 +52,13 @@ from app.schemas.operations import (
     FinancialReportOut,
     InvoiceOut,
     InvoiceWrite,
+    MaterialIssueOut,
     MachineOut,
     MachineWrite,
     OperationOut,
     OperationWrite,
+    OrderProgressOut,
+    MaterialRequirementOut,
     PaymentOut,
     PaymentWrite,
     ProductionLineOut,
@@ -73,6 +77,25 @@ from app.schemas.api import UserOut
 router = APIRouter()
 MANAGERS = (UserRole.ADMIN, UserRole.MANAGER)
 PRODUCTION_STAFF = (*MANAGERS, UserRole.WORKER)
+MATERIAL_QUANTUM = Decimal("0.01")
+
+
+def _round_material_quantity(value: Decimal) -> Decimal:
+    return value.quantize(MATERIAL_QUANTUM, rounding=ROUND_UP)
+
+
+def _check_worker_order_access(db: Session, user: User, order_id: int) -> None:
+    if user.role != UserRole.WORKER:
+        return
+    worker = db.scalar(select(Worker).where(Worker.user_id == user.id))
+    if worker is None or db.scalar(
+        select(WorkSchedule.id)
+        .where(WorkSchedule.order_id == order_id, WorkSchedule.worker_id == worker.id)
+        .limit(1)
+    ) is None:
+        raise HTTPException(403, "Bạn chỉ được xem đơn hàng được phân công.")
+
+
 def _commit(db: Session, message: str) -> None:
     try:
         db.commit()
@@ -116,9 +139,13 @@ def create_user(data: AdminUserCreate, db: DbSession, user: CurrentUser) -> User
         role=data.role,
     )
     db.add(account)
-    db.flush()
-    _audit(db, user, "create", "user", account.id)
-    _commit(db, "Email tài khoản đã được sử dụng.")
+    try:
+        db.flush()
+        _audit(db, user, "create", "user", account.id)
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(409, "Email tài khoản đã được sử dụng.") from exc
     db.refresh(account)
     return account
 
@@ -139,6 +166,19 @@ def update_user(user_id: int, data: AdminUserUpdate, db: DbSession, user: Curren
     _commit(db, "Không thể cập nhật tài khoản.")
     db.refresh(account)
     return account
+
+
+@router.delete("/admin/users/{user_id}", status_code=204)
+def delete_user(user_id: int, db: DbSession, user: CurrentUser) -> None:
+    ensure_roles(user, UserRole.ADMIN)
+    account = db.get(User, user_id)
+    if account is None:
+        raise HTTPException(404, "Không tìm thấy tài khoản.")
+    if account.id == user.id:
+        raise HTTPException(422, "Không thể xóa tài khoản đang đăng nhập; hãy nhờ quản trị viên khác.")
+    db.delete(account)
+    _audit(db, user, "delete", "user", user_id)
+    _commit(db, "Tài khoản đang được dữ liệu nghiệp vụ sử dụng; hãy vô hiệu hóa thay vì xóa.")
 
 
 def _validate_refs(db: Session, **refs: tuple[type, int | None]) -> None:
@@ -488,6 +528,7 @@ def list_bom(db: DbSession, user: CurrentUser, product_name: str | None = Query(
 @router.post("/bom", response_model=BOMOut, status_code=201)
 def create_bom(data: BOMWrite, db: DbSession, user: CurrentUser) -> BOMItem:
     ensure_roles(user, *MANAGERS)
+    _ensure_bom_not_issued(db, data.product_name)
     _validate_refs(db, **{"Nguyên liệu": (InventoryItem, data.material_id)})
     item = BOMItem(**data.model_dump())
     db.add(item)
@@ -504,6 +545,9 @@ def update_bom(item_id: int, data: BOMWrite, db: DbSession, user: CurrentUser) -
     item = db.get(BOMItem, item_id)
     if item is None:
         raise HTTPException(404, "Không tìm thấy dòng định mức.")
+    _ensure_bom_not_issued(db, item.product_name)
+    if data.product_name != item.product_name:
+        _ensure_bom_not_issued(db, data.product_name)
     _validate_refs(db, **{"Nguyên liệu": (InventoryItem, data.material_id)})
     for key, value in data.model_dump().items():
         setattr(item, key, value)
@@ -519,9 +563,219 @@ def delete_bom(item_id: int, db: DbSession, user: CurrentUser) -> None:
     item = db.get(BOMItem, item_id)
     if item is None:
         raise HTTPException(404, "Không tìm thấy dòng định mức.")
+    _ensure_bom_not_issued(db, item.product_name)
     db.delete(item)
     _audit(db, user, "delete", "bom_item", item_id)
     _commit(db, "Không thể xóa dòng định mức.")
+
+
+@router.get("/orders/{order_id}/progress", response_model=OrderProgressOut)
+def get_order_progress(order_id: int, db: DbSession, user: CurrentUser) -> OrderProgressOut:
+    ensure_roles(user, *PRODUCTION_STAFF, UserRole.CUSTOMER)
+    order = db.get(ProductionOrder, order_id)
+    if order is None:
+        raise HTTPException(404, "Không tìm thấy đơn sản xuất.")
+    if user.role == UserRole.CUSTOMER:
+        customer = db.scalar(select(Customer).where(Customer.user_id == user.id))
+        if customer is None or order.customer_id != customer.id:
+            raise HTTPException(404, "Không tìm thấy đơn sản xuất.")
+    else:
+        _check_worker_order_access(db, user, order_id)
+
+    operations = list(
+        db.scalars(
+            select(ProductionOperation)
+            .where(ProductionOperation.order_id == order_id)
+            .order_by(ProductionOperation.sequence)
+        ).all()
+    )
+    return _build_order_progress(order, operations)
+
+
+def _build_order_progress(
+    order: ProductionOrder, operations: list[ProductionOperation]
+) -> OrderProgressOut:
+    completed = sum(operation.completed_quantity for operation in operations)
+    rejected = sum(operation.rejected_quantity for operation in operations)
+    if not operations:
+        progress = Decimal(100 if order.status == OrderStatus.COMPLETED else 0)
+    else:
+        stage_progress = [
+            min(Decimal(operation.completed_quantity + operation.rejected_quantity) / order.quantity, Decimal(1))
+            for operation in operations
+        ]
+        progress = (sum(stage_progress, Decimal(0)) / len(stage_progress) * 100).quantize(
+            Decimal("0.01")
+        )
+    return OrderProgressOut(
+        order_id=order.id,
+        order_code=order.order_code,
+        status=order.status.value,
+        target_quantity=order.quantity,
+        completed_quantity=completed,
+        rejected_quantity=rejected,
+        progress_percent=float(progress),
+        operations=operations,
+    )
+
+
+@router.get("/orders/progress", response_model=list[OrderProgressOut])
+def list_order_progress(db: DbSession, user: CurrentUser) -> list[OrderProgressOut]:
+    ensure_roles(user, *PRODUCTION_STAFF, UserRole.CUSTOMER)
+    query = select(ProductionOrder)
+    if user.role == UserRole.CUSTOMER:
+        customer = db.scalar(select(Customer).where(Customer.user_id == user.id))
+        query = query.where(ProductionOrder.customer_id == (customer.id if customer else -1))
+    elif user.role == UserRole.WORKER:
+        worker = db.scalar(select(Worker).where(Worker.user_id == user.id))
+        query = query.join(WorkSchedule).where(
+            WorkSchedule.worker_id == (worker.id if worker else -1)
+        ).distinct()
+    orders = list(db.scalars(query.order_by(ProductionOrder.id)).all())
+    if not orders:
+        return []
+    operations = list(
+        db.scalars(
+            select(ProductionOperation)
+            .where(ProductionOperation.order_id.in_([order.id for order in orders]))
+            .order_by(ProductionOperation.order_id, ProductionOperation.sequence)
+        ).all()
+    )
+    operations_by_order: dict[int, list[ProductionOperation]] = {}
+    for operation in operations:
+        operations_by_order.setdefault(operation.order_id, []).append(operation)
+    return [
+        _build_order_progress(order, operations_by_order.get(order.id, []))
+        for order in orders
+    ]
+
+
+def _material_requirements(db: Session, order: ProductionOrder) -> list[dict]:
+    bom_items = list(
+        db.scalars(
+            select(BOMItem)
+            .where(BOMItem.product_name == order.product_name)
+            .order_by(BOMItem.material_id)
+        ).all()
+    )
+    if not bom_items:
+        raise HTTPException(409, "Sản phẩm chưa có định mức BOM.")
+
+    issue_totals = dict(
+        db.execute(
+            select(MaterialIssue.material_id, func.coalesce(func.sum(MaterialIssue.quantity), 0))
+            .where(MaterialIssue.order_id == order.id)
+            .group_by(MaterialIssue.material_id)
+        ).all()
+    )
+    requirements: list[dict] = []
+    for bom_item in bom_items:
+        material = db.get(InventoryItem, bom_item.material_id)
+        required = _round_material_quantity(Decimal(order.quantity) * bom_item.quantity_per_unit)
+        issued = Decimal(issue_totals.get(material.id, 0))
+        requirements.append({
+            "material_id": material.id,
+            "sku": material.sku,
+            "material_name": material.name,
+            "unit": material.unit,
+            "required_quantity": required,
+            "issued_quantity": issued,
+            "remaining_quantity": max(required - issued, Decimal(0)),
+            "available_quantity": material.quantity,
+        })
+    return requirements
+
+
+def _ensure_bom_not_issued(db: Session, product_name: str) -> None:
+    has_issues = db.scalar(
+        select(MaterialIssue.id)
+        .join(ProductionOrder, ProductionOrder.id == MaterialIssue.order_id)
+        .where(ProductionOrder.product_name == product_name)
+        .limit(1)
+    )
+    if has_issues is not None:
+        raise HTTPException(409, "Không thể thay đổi BOM sau khi đã xuất vật tư cho sản phẩm.")
+
+
+@router.get("/orders/{order_id}/material-requirements", response_model=list[MaterialRequirementOut])
+def get_material_requirements(order_id: int, db: DbSession, user: CurrentUser):
+    ensure_roles(user, *PRODUCTION_STAFF)
+    order = db.get(ProductionOrder, order_id)
+    if order is None:
+        raise HTTPException(404, "Không tìm thấy đơn sản xuất.")
+    _check_worker_order_access(db, user, order_id)
+    return _material_requirements(db, order)
+
+
+@router.get("/material-issues", response_model=list[MaterialIssueOut])
+def list_material_issues(
+    db: DbSession,
+    user: CurrentUser,
+    order_id: int | None = None,
+):
+    ensure_roles(user, *MANAGERS, UserRole.ACCOUNTANT)
+    query = select(MaterialIssue)
+    if order_id is not None:
+        query = query.where(MaterialIssue.order_id == order_id)
+    return list(db.scalars(query.order_by(MaterialIssue.issued_at.desc()).limit(500)).all())
+
+
+@router.post("/orders/{order_id}/materials/issue", response_model=list[MaterialIssueOut], status_code=201)
+def issue_order_materials(order_id: int, db: DbSession, user: CurrentUser):
+    ensure_roles(user, *MANAGERS)
+    order = db.scalar(
+        select(ProductionOrder).where(ProductionOrder.id == order_id).with_for_update()
+    )
+    if order is None:
+        raise HTTPException(404, "Không tìm thấy đơn sản xuất.")
+    if order.status in (OrderStatus.CANCELLED, OrderStatus.COMPLETED):
+        raise HTTPException(409, "Không thể xuất vật tư cho đơn đã hủy hoặc hoàn thành.")
+
+    requirements = _material_requirements(db, order)
+    remaining_requirements = [
+        requirement for requirement in requirements if requirement["remaining_quantity"] > 0
+    ]
+    if not remaining_requirements:
+        raise HTTPException(409, "Định mức vật tư của đơn hàng đã được xuất đủ.")
+
+    material_ids = [item["material_id"] for item in remaining_requirements]
+    materials = {
+        material.id: material
+        for material in db.scalars(
+            select(InventoryItem)
+            .where(InventoryItem.id.in_(material_ids))
+            .order_by(InventoryItem.id)
+            .with_for_update()
+        ).all()
+    }
+    insufficient = [
+        f"{item['sku']}: cần {item['remaining_quantity']} {item['unit']}, "
+        f"tồn {materials[item['material_id']].quantity} {item['unit']}"
+        for item in remaining_requirements
+        if materials[item["material_id"]].quantity < item["remaining_quantity"]
+    ]
+    if insufficient:
+        raise HTTPException(409, "Tồn kho không đủ; chưa xuất vật tư. " + "; ".join(insufficient))
+
+    issues: list[MaterialIssue] = []
+    for requirement in remaining_requirements:
+        material = materials[requirement["material_id"]]
+        quantity = requirement["remaining_quantity"]
+        material.quantity -= quantity
+        issue = MaterialIssue(
+            order_id=order.id,
+            material_id=material.id,
+            quantity=quantity,
+            issued_by_id=user.id,
+        )
+        db.add(issue)
+        issues.append(issue)
+    db.flush()
+    _audit(db, user, "issue", "order_materials", order.id)
+    _commit(db, "Không thể xuất vật tư; tồn kho hoặc định mức đã thay đổi.")
+    for issue in issues:
+        db.refresh(issue)
+    return issues
 
 
 @router.get("/operations", response_model=list[OperationOut])
@@ -530,6 +784,11 @@ def list_operations(db: DbSession, user: CurrentUser, order_id: int | None = Non
     query = select(ProductionOperation)
     if order_id is not None:
         query = query.where(ProductionOperation.order_id == order_id)
+    if user.role == UserRole.WORKER:
+        worker = db.scalar(select(Worker).where(Worker.user_id == user.id))
+        query = query.join(
+            WorkSchedule, WorkSchedule.order_id == ProductionOperation.order_id
+        ).where(WorkSchedule.worker_id == (worker.id if worker else -1)).distinct()
     return list(db.scalars(query.order_by(ProductionOperation.order_id, ProductionOperation.sequence)).all())
 
 
@@ -537,6 +796,10 @@ def list_operations(db: DbSession, user: CurrentUser, order_id: int | None = Non
 def create_operation(data: OperationWrite, db: DbSession, user: CurrentUser) -> ProductionOperation:
     ensure_roles(user, *MANAGERS)
     _validate_refs(db, **{"Đơn hàng": (ProductionOrder, data.order_id)})
+    if data.completed_quantity + data.rejected_quantity > db.get(
+        ProductionOrder, data.order_id
+    ).quantity:
+        raise HTTPException(422, "Sản lượng công đoạn không được vượt số lượng đơn hàng.")
     operation = ProductionOperation(**data.model_dump())
     db.add(operation)
     db.flush()
@@ -553,6 +816,9 @@ def update_operation(operation_id: int, data: OperationWrite, db: DbSession, use
     if operation is None:
         raise HTTPException(404, "Không tìm thấy công đoạn.")
     _validate_refs(db, **{"Đơn hàng": (ProductionOrder, data.order_id)})
+    order = db.get(ProductionOrder, data.order_id)
+    if data.completed_quantity + data.rejected_quantity > order.quantity:
+        raise HTTPException(422, "Sản lượng công đoạn không được vượt số lượng đơn hàng.")
     for key, value in data.model_dump().items():
         setattr(operation, key, value)
     _audit(db, user, "update", "production_operation", operation.id)
@@ -597,10 +863,22 @@ def create_production_log(data: ProductionLogWrite, db: DbSession, user: Current
         operation = db.get(ProductionOperation, data.operation_id)
         if operation.order_id != data.order_id:
             raise HTTPException(422, "Công đoạn không thuộc đơn hàng đã chọn.")
+        if user.role == UserRole.WORKER:
+            _check_worker_order_access(db, user, data.order_id)
+        if operation.completed_quantity + operation.rejected_quantity + data.good_quantity + data.rejected_quantity > db.get(
+            ProductionOrder, data.order_id
+        ).quantity:
+            raise HTTPException(422, "Sản lượng nhật ký vượt số lượng đơn hàng.")
         operation.completed_quantity += data.good_quantity
         operation.rejected_quantity += data.rejected_quantity
-        if operation.completed_quantity:
+        if operation.completed_quantity + operation.rejected_quantity >= db.get(
+            ProductionOrder, data.order_id
+        ).quantity:
             operation.status = OperationStatus.COMPLETED
+        elif operation.completed_quantity + operation.rejected_quantity > 0:
+            operation.status = OperationStatus.IN_PROGRESS
+    elif user.role == UserRole.WORKER:
+        _check_worker_order_access(db, user, data.order_id)
     db.flush()
     _audit(db, user, "create", "production_log", log.id)
     _commit(db, "Không thể lưu nhật ký sản xuất.")
@@ -631,6 +909,7 @@ def list_defects(db: DbSession, user: CurrentUser, order_id: int | None = None):
 @router.post("/defects", response_model=DefectOut, status_code=201)
 def create_defect(data: DefectWrite, db: DbSession, user: CurrentUser) -> QualityDefect:
     ensure_roles(user, *PRODUCTION_STAFF)
+    _check_worker_order_access(db, user, data.order_id)
     _validate_refs(db, **{
         "Đơn hàng": (ProductionOrder, data.order_id),
         "Công đoạn": (ProductionOperation, data.operation_id),
@@ -686,6 +965,8 @@ def create_invoice(data: InvoiceWrite, db: DbSession, user: CurrentUser) -> Invo
     order = db.get(ProductionOrder, data.order_id)
     if order is None:
         raise HTTPException(422, "Đơn hàng không tồn tại.")
+    if db.scalar(select(Invoice.id).where(Invoice.order_id == data.order_id).limit(1)) is not None:
+        raise HTTPException(409, "Đơn hàng này đã có hóa đơn. Hãy chọn một đơn chưa lập hóa đơn.")
     subtotal = Decimal(order.quantity) * data.service_unit_price
     if data.discount_amount > subtotal:
         raise HTTPException(422, "Chiết khấu không được lớn hơn thành tiền.")
@@ -718,6 +999,10 @@ def update_invoice(invoice_id: int, data: InvoiceWrite, db: DbSession, user: Cur
     order = db.get(ProductionOrder, data.order_id)
     if order is None:
         raise HTTPException(422, "Đơn hàng không tồn tại.")
+    if db.scalar(
+        select(Invoice.id).where(Invoice.order_id == data.order_id, Invoice.id != invoice.id).limit(1)
+    ) is not None:
+        raise HTTPException(409, "Đơn hàng này đã có hóa đơn khác. Hãy chọn đơn chưa lập hóa đơn.")
     subtotal = Decimal(order.quantity) * data.service_unit_price
     if data.discount_amount > subtotal:
         raise HTTPException(422, "Chiết khấu không được lớn hơn thành tiền.")

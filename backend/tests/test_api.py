@@ -384,6 +384,246 @@ def test_invoice_payment_and_expense_workflow(client: TestClient) -> None:
     ).status_code == 422
 
 
+def test_invoice_rejects_duplicate_order_with_clear_conflict(client: TestClient) -> None:
+    headers = _admin_headers(client)
+    order = client.post(
+        "/api/orders",
+        headers=headers,
+        json={"order_code": "INV-UNIQUE-ORDER", "product_name": "Bàn", "quantity": 2},
+    ).json()
+    payload = {
+        "invoice_code": "INV-UNIQUE-1",
+        "order_id": order["id"],
+        "service_unit_price": 100000,
+        "status": "issued",
+    }
+    assert client.post("/api/invoices", headers=headers, json=payload).status_code == 201
+    duplicate = client.post(
+        "/api/invoices",
+        headers=headers,
+        json={**payload, "invoice_code": "INV-UNIQUE-2"},
+    )
+    assert duplicate.status_code == 409
+    assert duplicate.json()["detail"] == "Đơn hàng này đã có hóa đơn. Hãy chọn một đơn chưa lập hóa đơn."
+
+
+def test_bom_material_issue_is_atomic_and_cannot_be_duplicated(client: TestClient) -> None:
+    headers = _admin_headers(client)
+    order = client.post(
+        "/api/orders",
+        headers=headers,
+        json={"order_code": "MAT-ISSUE-01", "product_name": "Kệ vật tư", "quantity": 4},
+    ).json()
+    steel = client.post(
+        "/api/inventory",
+        headers=headers,
+        json={
+            "sku": "MAT-ISSUE-ST",
+            "name": "Thép",
+            "unit": "kg",
+            "quantity": 20,
+            "minimum_quantity": 0,
+            "unit_cost": 10,
+        },
+    ).json()
+    paint = client.post(
+        "/api/inventory",
+        headers=headers,
+        json={
+            "sku": "MAT-ISSUE-PA",
+            "name": "Sơn",
+            "unit": "lít",
+            "quantity": 1,
+            "minimum_quantity": 0,
+            "unit_cost": 10,
+        },
+    ).json()
+    for material_id, quantity in ((steel["id"], 2.5), (paint["id"], 0.5)):
+        assert client.post(
+            "/api/bom",
+            headers=headers,
+            json={
+                "product_name": "Kệ vật tư",
+                "material_id": material_id,
+                "quantity_per_unit": quantity,
+            },
+        ).status_code == 201
+    assert client.delete(f"/api/inventory/{steel['id']}", headers=headers).status_code == 409
+
+    requirements = client.get(
+        f"/api/orders/{order['id']}/material-requirements", headers=headers
+    )
+    assert requirements.status_code == 200
+    assert [item["required_quantity"] for item in requirements.json()] == ["10.00", "2.00"]
+
+    insufficient = client.post(f"/api/orders/{order['id']}/materials/issue", headers=headers)
+    assert insufficient.status_code == 409
+    inventory = {item["id"]: item for item in client.get("/api/inventory", headers=headers).json()}
+    assert inventory[steel["id"]]["quantity"] == 20
+    assert inventory[paint["id"]]["quantity"] == 1
+    assert client.get("/api/material-issues", headers=headers).json() == []
+
+    assert client.put(
+        f"/api/inventory/{paint['id']}",
+        headers=headers,
+        json={
+            "sku": "MAT-ISSUE-PA",
+            "name": "Sơn",
+            "unit": "lít",
+            "quantity": 2,
+            "minimum_quantity": 0,
+            "unit_cost": 10,
+        },
+    ).status_code == 200
+    issued = client.post(f"/api/orders/{order['id']}/materials/issue", headers=headers)
+    assert issued.status_code == 201
+    assert {item["quantity"] for item in issued.json()} == {"2.00", "10.00"}
+    inventory = {item["id"]: item for item in client.get("/api/inventory", headers=headers).json()}
+    assert inventory[steel["id"]]["quantity"] == 10
+    assert inventory[paint["id"]]["quantity"] == 0
+    assert client.post(f"/api/orders/{order['id']}/materials/issue", headers=headers).status_code == 409
+    bom_row = client.get("/api/bom?product_name=Kệ%20vật%20tư", headers=headers).json()[0]
+    assert client.put(
+        f"/api/bom/{bom_row['id']}",
+        headers=headers,
+        json={
+            "product_name": "Kệ vật tư",
+            "material_id": bom_row["material_id"],
+            "quantity_per_unit": 3,
+        },
+    ).status_code == 409
+    assert client.put(
+        f"/api/orders/{order['id']}",
+        headers=headers,
+        json={
+            "order_code": order["order_code"],
+            "product_name": order["product_name"],
+            "quantity": order["quantity"] + 1,
+            "status": order["status"],
+        },
+    ).status_code == 409
+    assert client.delete(f"/api/orders/{order['id']}", headers=headers).status_code == 409
+
+
+def test_order_progress_aggregates_operations_and_rejects_overproduction(client: TestClient) -> None:
+    headers = _admin_headers(client)
+    order = client.post(
+        "/api/orders",
+        headers=headers,
+        json={"order_code": "PROGRESS-01", "product_name": "Bàn", "quantity": 10},
+    ).json()
+    first = client.post(
+        "/api/operations",
+        headers=headers,
+        json={"order_id": order["id"], "stage_name": "Cắt", "sequence": 1},
+    ).json()
+    second = client.post(
+        "/api/operations",
+        headers=headers,
+        json={"order_id": order["id"], "stage_name": "Lắp ráp", "sequence": 2},
+    ).json()
+    logged = client.post(
+        "/api/production-logs",
+        headers=headers,
+        json={
+            "order_id": order["id"],
+            "operation_id": first["id"],
+            "good_quantity": 4,
+            "rejected_quantity": 1,
+        },
+    )
+    assert logged.status_code == 201
+    assert client.post(
+        "/api/production-logs",
+        headers=headers,
+        json={
+            "order_id": order["id"],
+            "operation_id": first["id"],
+            "good_quantity": 6,
+        },
+    ).status_code == 422
+    progress = client.get(f"/api/orders/{order['id']}/progress", headers=headers)
+    assert progress.status_code == 200
+    assert progress.json()["progress_percent"] == 25.0
+    assert progress.json()["completed_quantity"] == 4
+    assert progress.json()["rejected_quantity"] == 1
+    assert [item["id"] for item in progress.json()["operations"]] == [first["id"], second["id"]]
+    bulk = client.get("/api/orders/progress", headers=headers)
+    assert bulk.status_code == 200
+    assert next(item for item in bulk.json() if item["order_id"] == order["id"])["progress_percent"] == 25.0
+    completed = client.post(
+        "/api/orders",
+        headers=headers,
+        json={
+            "order_code": "PROGRESS-DONE",
+            "product_name": "Tủ hoàn thành",
+            "quantity": 1,
+            "status": "completed",
+        },
+    ).json()
+    assert client.get(
+        f"/api/orders/{completed['id']}/progress", headers=headers
+    ).json()["progress_percent"] == 100.0
+
+
+def test_worker_can_only_log_for_an_assigned_order(client: TestClient) -> None:
+    admin_headers = _admin_headers(client)
+    worker_headers = {
+        "Authorization": f"Bearer {client.post('/api/auth/login', json={'email': 'worker@example.com', 'password': 'ChangeMe123!'}).json()['access_token']}"
+    }
+    worker_user_id = client.get("/api/auth/me", headers=worker_headers).json()["id"]
+    worker = client.post(
+        "/api/workers",
+        headers=admin_headers,
+        json={"worker_code": "W-ASSIGN", "full_name": "Công nhân", "user_id": worker_user_id},
+    ).json()
+    assigned = client.post(
+        "/api/orders",
+        headers=admin_headers,
+        json={"order_code": "ASSIGNED-01", "product_name": "Bàn", "quantity": 5},
+    ).json()
+    unrelated = client.post(
+        "/api/orders",
+        headers=admin_headers,
+        json={"order_code": "UNASSIGNED-01", "product_name": "Tủ", "quantity": 5},
+    ).json()
+    line = client.post(
+        "/api/production-lines",
+        headers=admin_headers,
+        json={"line_code": "L-ASSIGN", "name": "Dây chuyền"},
+    ).json()
+    machine = client.post(
+        "/api/machines",
+        headers=admin_headers,
+        json={"machine_code": "M-ASSIGN", "name": "Máy", "line_id": line["id"]},
+    ).json()
+    schedule = client.post(
+        "/api/schedules",
+        headers=admin_headers,
+        json={
+            "order_id": assigned["id"],
+            "worker_id": worker["id"],
+            "machine_id": machine["id"],
+            "starts_at": "2026-07-01T08:00:00+07:00",
+            "ends_at": "2026-07-01T12:00:00+07:00",
+        },
+    )
+    assert schedule.status_code == 201
+    assert client.post(
+        "/api/production-logs",
+        headers=worker_headers,
+        json={"order_id": unrelated["id"], "good_quantity": 1},
+    ).status_code == 403
+    assert client.post(
+        "/api/production-logs",
+        headers=worker_headers,
+        json={"order_id": assigned["id"], "good_quantity": 1},
+    ).status_code == 201
+    visible_progress = client.get("/api/orders/progress", headers=worker_headers)
+    assert visible_progress.status_code == 200
+    assert {item["order_id"] for item in visible_progress.json()} == {assigned["id"]}
+
+
 def test_draft_invoice_can_be_updated_then_issued(client: TestClient) -> None:
     headers = _admin_headers(client)
     order = client.post(
@@ -499,6 +739,7 @@ def test_ai_rejects_jailbreak_and_supports_workflow_tasks(client: TestClient, mo
     )
     assert draft.status_code == 200
     assert "kiểm duyệt trước khi gửi" in draft.json()["answer"]
+    assert "tiến độ 0.00%" in draft.json()["answer"]
     explanation = client.post(
         "/api/ai/technical-explanation",
         headers=headers,
@@ -538,6 +779,18 @@ def test_admin_user_management_enforces_roles_and_deactivation(client: TestClien
         },
     )
     assert created.status_code == 201
+    duplicate = client.post(
+        "/api/admin/users",
+        headers=headers,
+        json={
+            "email": "new-customer@example.com",
+            "full_name": "Tài khoản trùng",
+            "password": "AnotherSecure123!",
+            "role": "customer",
+        },
+    )
+    assert duplicate.status_code == 409
+    assert duplicate.json()["detail"] == "Email tài khoản đã được sử dụng."
     assert "password_hash" not in created.json()
     user_id = created.json()["id"]
     assert created.json()["role"] == "customer"
@@ -574,6 +827,54 @@ def test_admin_user_management_enforces_roles_and_deactivation(client: TestClien
         headers={"Authorization": f"Bearer {worker_token}"},
     ).status_code == 403
     assert all("password_hash" not in entry for entry in client.get("/api/admin/users", headers=headers).json())
+
+
+def test_admin_can_delete_account_but_not_self_and_delete_is_role_protected(client: TestClient) -> None:
+    headers = _admin_headers(client)
+    created = client.post(
+        "/api/admin/users",
+        headers=headers,
+        json={
+            "email": "delete-me@example.com",
+            "full_name": "Tài khoản cần xóa",
+            "password": "SecurePassword123!",
+            "role": "customer",
+        },
+    )
+    assert created.status_code == 201
+    user_id = created.json()["id"]
+
+    deleted = client.delete(f"/api/admin/users/{user_id}", headers=headers)
+    assert deleted.status_code == 204
+    assert all(account["id"] != user_id for account in client.get("/api/admin/users", headers=headers).json())
+    assert client.post(
+        "/api/auth/login",
+        json={"email": "delete-me@example.com", "password": "SecurePassword123!"},
+    ).status_code == 401
+    assert client.delete("/api/admin/users/1", headers=headers).status_code == 422
+    assert client.delete("/api/admin/users/9999", headers=headers).status_code == 404
+
+    second_admin = client.post(
+        "/api/admin/users",
+        headers=headers,
+        json={
+            "email": "second-admin@example.com",
+            "full_name": "Quản trị viên thứ hai",
+            "password": "SecurePassword123!",
+            "role": "admin",
+        },
+    )
+    assert second_admin.status_code == 201
+    assert client.delete(f"/api/admin/users/{second_admin.json()['id']}", headers=headers).status_code == 204
+
+    worker_token = client.post(
+        "/api/auth/login",
+        json={"email": "worker@example.com", "password": "ChangeMe123!"},
+    ).json()["access_token"]
+    assert client.delete(
+        "/api/admin/users/1",
+        headers={"Authorization": f"Bearer {worker_token}"},
+    ).status_code == 403
 
 
 def test_user_can_change_password_with_current_password(client: TestClient) -> None:
@@ -691,12 +992,34 @@ def test_bom_operation_worker_log_and_quality_defect_flow(client: TestClient) ->
         headers=headers,
         json={"worker_code": "FLOW-W", "full_name": "Worker", "user_id": 2},
     )
+    line = client.post(
+        "/api/production-lines",
+        headers=headers,
+        json={"line_code": "FLOW-L", "name": "Dây chuyền Flow"},
+    ).json()
+    machine = client.post(
+        "/api/machines",
+        headers=headers,
+        json={"machine_code": "FLOW-M", "name": "Máy Flow", "line_id": line["id"]},
+    ).json()
+    schedule = client.post(
+        "/api/schedules",
+        headers=headers,
+        json={
+            "order_id": order["id"],
+            "worker_id": worker.json()["id"],
+            "machine_id": machine["id"],
+            "line_id": line["id"],
+            "starts_at": "2026-07-01T08:00:00+07:00",
+            "ends_at": "2026-07-01T12:00:00+07:00",
+        },
+    )
     operation = client.post(
         "/api/operations",
         headers=headers,
         json={"order_id": order["id"], "stage_name": "Cắt", "sequence": 1},
     )
-    assert worker.status_code == operation.status_code == 201
+    assert worker.status_code == schedule.status_code == operation.status_code == 201
     bom = client.post(
         "/api/bom",
         headers=headers,

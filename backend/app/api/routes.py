@@ -16,6 +16,7 @@ from app.models import (
     ProductionLog,
     ProductionOperation,
     ProductionOrder,
+    MaterialIssue,
     Shift,
     User,
     WorkSchedule,
@@ -132,9 +133,20 @@ def delete_inventory(item_id: int, db: DbSession, user: ManagerUser) -> None:
     item = db.get(InventoryItem, item_id)
     if item is None:
         raise HTTPException(404, "Không tìm thấy mặt hàng.")
+    if (
+        db.scalar(select(BOMItem.id).where(BOMItem.material_id == item_id).limit(1)) is not None
+        or db.scalar(
+            select(MaterialIssue.id).where(MaterialIssue.material_id == item_id).limit(1)
+        ) is not None
+    ):
+        raise HTTPException(409, "Không thể xóa nguyên liệu đang được BOM hoặc giao dịch sử dụng.")
     db.delete(item)
     _record_change(db, user, "delete", "inventory_item", item_id)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(409, "Không thể xóa nguyên liệu đang được BOM hoặc giao dịch sử dụng.") from exc
 
 
 @router.get("/orders", response_model=list[OrderOut])
@@ -198,6 +210,18 @@ def update_order(order_id: int, data: OrderUpdate, db: DbSession, user: CurrentU
     order = db.get(ProductionOrder, order_id)
     if order is None:
         raise HTTPException(404, "Không tìm thấy đơn sản xuất.")
+    has_material_issues = db.scalar(
+        select(MaterialIssue.id).where(MaterialIssue.order_id == order.id).limit(1)
+    ) is not None
+    if has_material_issues and (
+        data.product_name != order.product_name
+        or data.quantity != order.quantity
+        or data.status == OrderStatus.CANCELLED
+    ):
+        raise HTTPException(
+            409,
+            "Đơn đã xuất vật tư; không thể đổi sản phẩm, số lượng hoặc hủy đơn trước khi xử lý hoàn trả.",
+        )
     if user.role == UserRole.CUSTOMER:
         customer = db.scalar(select(Customer).where(Customer.user_id == user.id))
         if customer is None or order.customer_id != customer.id:
@@ -230,6 +254,8 @@ def delete_order(order_id: int, db: DbSession, user: ManagerUser) -> None:
     order = db.get(ProductionOrder, order_id)
     if order is None:
         raise HTTPException(404, "Không tìm thấy đơn sản xuất.")
+    if db.scalar(select(MaterialIssue.id).where(MaterialIssue.order_id == order.id).limit(1)) is not None:
+        raise HTTPException(409, "Không thể xóa đơn đã phát sinh xuất vật tư.")
     db.delete(order)
     _record_change(db, user, "delete", "production_order", order_id)
     db.commit()
@@ -318,19 +344,54 @@ async def ai_customer_progress(
     order = db.get(ProductionOrder, data.order_id)
     if order is None:
         raise HTTPException(404, "Không tìm thấy đơn sản xuất.")
+    operations = list(
+        db.scalars(
+            select(ProductionOperation)
+            .where(ProductionOperation.order_id == order.id)
+            .order_by(ProductionOperation.sequence)
+        ).all()
+    )
+    progress_percent = (
+        sum(
+            (
+                min(
+                    Decimal(operation.completed_quantity + operation.rejected_quantity)
+                    / order.quantity,
+                    Decimal(1),
+                )
+                for operation in operations
+            ),
+            Decimal(0),
+        )
+        / len(operations)
+        * 100
+        if operations
+        else Decimal(100 if order.status == OrderStatus.COMPLETED else 0)
+    ).quantize(Decimal("0.01"))
     context = {
         "order_code": order.order_code,
         "product_name": order.product_name,
         "quantity": order.quantity,
         "status": order.status.value,
         "due_date": order.due_date.isoformat() if order.due_date else None,
+        "progress_percent": str(progress_percent),
+        "operations": [
+            {
+                "sequence": operation.sequence,
+                "stage_name": operation.stage_name,
+                "status": operation.status.value,
+                "completed_quantity": operation.completed_quantity,
+                "rejected_quantity": operation.rejected_quantity,
+            }
+            for operation in operations
+        ],
     }
     return await generate_ai_response(
         "Soạn bản nháp thông báo tiến độ cho khách hàng.",
         context,
         (PROJECT_ROOT / "backend" / "app" / "prompts" / "customer_progress_system.txt").read_text(encoding="utf-8"),
         f"Bản nháp: Đơn {order.order_code} ({order.product_name}) hiện "
-        f"{order.status.value}; số lượng {order.quantity}. "
+        f"{order.status.value}; tiến độ {progress_percent}%; số lượng {order.quantity}. "
         f"{'Hạn dự kiến: ' + order.due_date.strftime('%d/%m/%Y') + '.' if order.due_date else 'Chưa có hạn hoàn thành.'} "
         "Vui lòng kiểm duyệt trước khi gửi.",
         f"Đơn hàng {order.order_code}",

@@ -1,4 +1,4 @@
 Soạn bản nháp cập nhật tiến độ đơn hàng bằng tiếng Việt, ngắn gọn và lịch sự.
-Chỉ dùng trạng thái, số lượng, sản phẩm và hạn hoàn thành được cung cấp; không hứa thời điểm chưa xác nhận.
+Chỉ dùng trạng thái, tiến độ phần trăm, số lượng, sản phẩm, trạng thái từng công đoạn và hạn hoàn thành được cung cấp; không hứa thời điểm chưa xác nhận.
 Không tự gửi tin nhắn, không thêm thông tin khách hàng hoặc dữ liệu không có trong ngữ cảnh.
 Ghi rõ đây là bản nháp cần nhân viên kiểm duyệt trước khi gửi.
