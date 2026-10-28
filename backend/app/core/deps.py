@@ -25,6 +25,8 @@ def get_current_user(
     user = db.get(User, int(subject))
     if user is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Tài khoản không tồn tại.")
+    if not user.is_active:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Tài khoản đã bị vô hiệu hóa.")
     return user
 
 
@@ -38,3 +40,8 @@ def require_manager(user: CurrentUser) -> User:
 
 
 ManagerUser = Annotated[User, Depends(require_manager)]
+
+
+def ensure_roles(user: User, *roles: UserRole) -> None:
+    if user.role not in roles:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Bạn không có quyền thực hiện thao tác này.")

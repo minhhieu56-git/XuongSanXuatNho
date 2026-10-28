@@ -1,26 +1,24 @@
 # Workshop AI — Quản lý xưởng sản xuất
 
-MVP quản lý đơn sản xuất và nguyên vật liệu, có đăng nhập/phân quyền, dashboard và trợ lý phân tích Gemini. Stack: React + TypeScript + Vite, FastAPI + SQLAlchemy, PostgreSQL 16.
+Ứng dụng web quản lý sản xuất xưởng với React/TypeScript, FastAPI, SQLAlchemy, PostgreSQL 16 và Gemini API (tùy chọn cấu hình). Có đăng nhập JWT, phân quyền 5 vai trò, quản lý nguồn lực/lịch sản xuất, BOM, nhật ký/chất lượng, tài chính, báo cáo và các trợ lý AI theo nghiệp vụ.
 
-## Chạy thử trên Windows
+## Yêu cầu môi trường
 
-Yêu cầu: Python 3.11+, Node.js 20+, Docker Desktop.
+- Python 3.11 trở lên và PostgreSQL 16 đang chạy, có thể kết nối theo `DATABASE_URL`.
+- Node.js 20 trở lên.
+- Không cần và không sử dụng Docker Compose trong hướng dẫn chạy này.
 
-1. Tạo cấu hình môi trường:
+## Cấu hình và chạy trên Windows
+
+1. Tạo `.env` từ mẫu:
 
    ```powershell
    Copy-Item .env.example .env
    ```
 
-   Trước khi dùng ngoài máy cá nhân, thay `POSTGRES_PASSWORD` và `JWT_SECRET` bằng giá trị ngẫu nhiên đủ mạnh. Đặt `GEMINI_API_KEY` trong `.env` để bật trợ lý AI. Không đưa `.env` lên Git.
+   Cập nhật `DATABASE_URL`, `JWT_SECRET` bằng thông tin môi trường của bạn. Đặt `GEMINI_API_KEY` trong `.env` nếu muốn gọi Gemini. Không chia sẻ key, không đưa `.env` vào Git.
 
-2. Khởi động PostgreSQL 16:
-
-   ```powershell
-   docker compose up -d db
-   ```
-
-3. Cài và khởi động backend:
+2. Cài backend, nâng cấp schema bổ sung an toàn và tạo dữ liệu demo:
 
    ```powershell
    cd backend
@@ -31,9 +29,9 @@ Yêu cầu: Python 3.11+, Node.js 20+, Docker Desktop.
    uvicorn app.main:app --reload --port 8001
    ```
 
-   API docs: <http://localhost:8001/docs>, health check: <http://localhost:8001/health>.
+   Schema được bổ sung theo hướng additive, không xóa dữ liệu hiện có. API docs: <http://localhost:8001/docs>; health check: <http://localhost:8001/health>.
 
-4. Trong cửa sổ PowerShell khác, cài và khởi động frontend:
+3. Ở cửa sổ PowerShell khác:
 
    ```powershell
    cd frontend
@@ -41,60 +39,70 @@ Yêu cầu: Python 3.11+, Node.js 20+, Docker Desktop.
    npm run dev
    ```
 
-   Truy cập <http://localhost:5173>. Vite chuyển tiếp `/api` tới backend ở cổng 8001, tránh gọi nhầm dịch vụ khác trên cổng 8000. Các tài khoản demo `admin@example.com`, `manager@example.com`, `worker@example.com` dùng chung mật khẩu `ChangeMe123!`; hãy đổi hoặc xóa tài khoản demo trước khi triển khai thật.
+   Truy cập <http://localhost:5173>. Vite proxy chuyển `/api` tới backend cổng `8001`.
 
-### Phân tích AI
+### Tài khoản demo
 
-- Không có Gemini API key: chức năng vẫn phân tích nội bộ các mặt hàng dưới ngưỡng tồn và đơn chưa hoàn tất bằng quy tắc xác định. Kết quả ghi rõ đây không phải phản hồi Gemini.
-- Muốn dùng mô hình Gemini: tạo API key riêng, thêm `GEMINI_API_KEY=<key-cua-ban>` vào `.env` ở thư mục gốc, rồi dừng và chạy lại backend. Model mặc định là `gemini-3.5-flash-lite`; có thể đổi bằng `GEMINI_MODEL` nếu model đó được cấp cho API key của bạn. Không chia sẻ API key trong chat hoặc đưa `.env` lên Git.
+`python -m app.seed` tạo idempotent năm tài khoản `admin@example.com`, `manager@example.com`, `worker@example.com`, `accountant@example.com`, `customer@example.com`, mật khẩu demo `ChangeMe123!`. Hãy đổi mật khẩu hoặc thay tài khoản trước khi triển khai thật. Seed chỉ thêm dữ liệu mẫu còn thiếu, không ghi đè các bản ghi đã tồn tại.
 
-5. Chạy kiểm thử backend:
+## Phạm vi đang có
 
-   ```powershell
-   cd backend
-   python -m pytest -q
-   ```
+- **Admin:** quản lý tài khoản, vai trò/trạng thái, reset mật khẩu, audit log.
+- **Manager:** quản lý đơn, công nhân, khách hàng, máy, dây chuyền, ca, lịch; BOM, công đoạn, lỗi, hóa đơn/chi phí và AI.
+- **Worker:** xem đơn được phân công, lịch cá nhân, BOM/quy trình; ghi nhật ký sản lượng/sự cố và lỗi chất lượng.
+- **Accountant:** xem dữ liệu cần cho kế toán, lập hóa đơn/ghi thanh toán, quản lý chi phí, xem báo cáo tài chính.
+- **Customer:** chỉ xem đơn/hóa đơn của hồ sơ liên kết, tạo yêu cầu sản xuất và chỉnh/hủy đơn còn ở trạng thái chờ.
+- API backend là nguồn kiểm soát quyền; frontend chỉ ẩn thao tác không được phép, không thay thế RBAC server-side.
+- Lịch chặn giao nhau trên cùng công nhân hoặc máy trong trạng thái đang hoạt động; PostgreSQL dùng advisory transaction lock để tuần tự hóa thao tác xếp lịch.
+- Hóa đơn tính thành tiền từ số lượng đơn hàng × đơn giá dịch vụ, áp chiết khấu, theo dõi thanh toán một phần/đầy đủ; báo cáo có lọc ngày.
+- Audit log ghi nhận thay đổi chính của tài khoản, đơn hàng, kho và các module mới.
 
-   Kiểm tra frontend production build:
+## AI và quyền riêng tư
 
-   ```powershell
-   cd frontend
-   npm run build
-   ```
+- Gemini được gọi phía backend; API key không được gửi xuống React. Nếu chưa cấu hình key, phân tích kho/đơn, tóm tắt ca, bản nháp tiến độ và giải thích BOM có fallback nội bộ, được đánh dấu là phân tích nội bộ.
+- Bốn luồng hiện có: phân tích đơn/kho, tóm tắt nhật ký ca, tạo bản nháp tiến độ (không tự gửi), giải thích BOM/công đoạn.
+- Giá vốn không nằm trong context gửi Gemini; email, điện thoại, chuỗi số định danh 9–12 chữ số và một số trường tên/địa chỉ được gắn nhãn được che trước khi gọi. Context AI chỉ lấy dữ liệu tối thiểu cần thiết, có giới hạn số bản ghi và giới hạn kích thước.
+- Bộ lọc prompt injection hiện là heuristic có test với một số câu tiếng Anh/tiếng Việt, không phải bộ phân loại toàn diện. Che tên/địa chỉ bằng regex không đảm bảo nhận diện mọi cách viết; **không gửi dữ liệu nhạy cảm hoặc dữ liệu thật chưa được kiểm soát**. Chưa có bằng chứng để tuyên bố masking 100% hoặc chặn jailbreak ≥95%.
+- Mọi phản hồi AI có disclaimer. Kết quả chỉ tham khảo, nhân sự có thẩm quyền phải kiểm chứng; AI không tự tạo giao dịch.
+- Cấu hình `GEMINI_MODEL` theo model mà API key của bạn được cấp quyền. Lỗi timeout, giới hạn tốc độ, model hoặc response rỗng được trả thành lỗi API có thông báo.
 
-## Phạm vi MVP
+## Kiểm thử
 
-- Đăng nhập bằng email/mật khẩu, JWT, vai trò `admin`, `manager`, `worker`; manager/admin được tạo, sửa, xóa đơn và vật tư. Worker chỉ đọc dữ liệu.
-- CRUD đơn sản xuất và vật tư, tìm kiếm/lọc theo từ khóa/trạng thái, sắp xếp vật tư; kiểm tra khóa ngoại và mã/SKU trùng.
-- Dashboard tổng đơn, đơn đang sản xuất/đã hoàn thành, cảnh báo tồn tối thiểu, giá trị kho và đơn gần đây.
-- Gemini phân tích dữ liệu đơn và kho theo quyền đăng nhập; timeout/rate limit/phản hồi rỗng được báo lỗi. AI chỉ tư vấn, không được phép ghi dữ liệu.
+```powershell
+cd backend
+python -m pytest -q
+
+cd ..\frontend
+npm run build
+```
+
+Kết quả xác minh trong phiên hoàn thiện này: **25 backend tests pass**, Python compile pass, React TypeScript/Vite production build pass; schema additive đã chạy trên PostgreSQL 16, các bảng/enum/check constraints được kiểm tra, seed chạy lại không làm tăng dữ liệu mẫu. Gemini request được kiểm thử bằng mock; không phải benchmark dịch vụ thật.
+
+Chưa có bằng chứng đo ngưỡng CRUD `<1,5s`, Gemini `<5s`, tải đồng thời `50–100`, tỷ lệ chặn jailbreak `≥95%`, E2E trình duyệt/tablet, hoặc khôi phục backup. Không coi các mục tiêu định lượng trong báo cáo là đã đạt chỉ dựa trên unit/API tests.
 
 ## Cấu trúc
 
 ```text
-backend/
-  app/api/          API routes
-  app/core/         cấu hình, database, bảo mật, dependency
-  app/models/       entity và quan hệ SQLAlchemy
-  app/prompts/      system prompt AI
-  app/schemas/      request/response validation
-  app/services/     tích hợp Gemini
-  tests/            API tests
-frontend/
-  src/              giao diện React và API client
-docker-compose.yml  PostgreSQL 16
-docs/               phân tích, thiết kế và nhật ký AI
+backend/app/api/          REST routes
+backend/app/core/         cấu hình, database, auth, schema migration
+backend/app/models/       SQLAlchemy entities/relations
+backend/app/prompts/      system/task prompts
+backend/app/schemas/      request/response validation
+backend/app/services/     Gemini và phân tích nội bộ
+backend/tests/            API integration tests
+frontend/src/             React UI và API client
+docs/                     phân tích, yêu cầu và nhật ký bằng chứng AI
 ```
 
-## Lưu ý triển khai
+## Giới hạn và triển khai thật
 
-- Cấu hình trong `.env` là bắt buộc cho môi trường triển khai; không dùng JWT secret mặc định.
-- Bản MVP tạo bảng bằng `create_all`; dự án triển khai thật cần bổ sung Alembic migrations, HTTPS, quản lý vòng đời token/session, quy trình đổi mật khẩu và tài khoản người dùng do admin quản lý.
-- JWT được lưu phía trình duyệt để thuận tiện demo. Với hệ thống internet-facing nên đánh giá lại mô hình token, CSP/XSS, cookie `HttpOnly`/`Secure`/`SameSite`, CSRF và chính sách lưu giữ dữ liệu.
-- Hiện chưa có workflow công đoạn/nhân công, định mức nguyên liệu để tự động trừ kho, khôi phục backup, logging/audit trail và kiểm thử end-to-end.
-- `docker-compose.yml` chỉ khởi chạy PostgreSQL; backend/frontend được chạy riêng theo hướng dẫn trên.
+- `upgrade_schema()` là migration bootstrap additive/idempotent cho thay đổi hiện có, chưa thay thế lịch sử migration có version như Alembic. Sao lưu database trước khi nâng cấp production.
+- Chưa có flow duyệt đơn đầy đủ, tiến độ phần trăm công đoạn, tự trừ kho theo BOM, kết nối gửi SMS/Zalo/email, bảo trì dự đoán, backup/restore tự động hoặc E2E/load test.
+- JWT lưu ở localStorage để demo; cần đánh giá cookie `HttpOnly`/`Secure`/`SameSite`, CSP/XSS, thu hồi token và TLS khi triển khai internet-facing.
+- Thay secrets mặc định, không dùng mật khẩu demo, bật TLS, cấu hình CORS tối thiểu và quản lý quyền DB theo nguyên tắc least privilege.
 
 ## Tài liệu
 
 - [Phân tích và thiết kế](docs/ANALYSIS_DESIGN.md)
 - [Nhật ký và kế hoạch kiểm chứng AI](docs/AI_EVIDENCE.md)
+- [Yêu cầu trích xuất từ báo cáo và đối chiếu code](docs/REQUIREMENTS_FROM_REPORT.md)

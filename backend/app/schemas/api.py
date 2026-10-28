@@ -11,11 +11,17 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=8, max_length=128)
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(min_length=8, max_length=128)
+    new_password: str = Field(min_length=12, max_length=128)
+
+
 class UserOut(BaseModel):
     id: int
     email: EmailStr
     full_name: str
     role: UserRole
+    is_active: bool = True
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -52,6 +58,15 @@ class InventoryOut(InventoryCreate):
         return float(value)
 
 
+class MaterialReferenceOut(BaseModel):
+    id: int
+    sku: str
+    name: str
+    unit: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class OrderCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -62,6 +77,7 @@ class OrderCreate(BaseModel):
     status: OrderStatus = OrderStatus.PLANNED
     notes: str | None = Field(default=None, max_length=4000)
     material_id: int | None = None
+    customer_id: int | None = None
 
 
 class OrderUpdate(OrderCreate):
@@ -72,7 +88,7 @@ class OrderOut(OrderCreate):
     id: int
     created_by_id: int
     created_at: datetime
-    material: InventoryOut | None = None
+    material: MaterialReferenceOut | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -92,6 +108,18 @@ class DashboardOut(BaseModel):
 
 class AIAnalysisRequest(BaseModel):
     question: str = Field(min_length=5, max_length=1000)
+
+
+class AIShiftSummaryRequest(BaseModel):
+    shift_id: int
+
+
+class AICustomerProgressRequest(BaseModel):
+    order_id: int
+
+
+class AITechnicalExplanationRequest(BaseModel):
+    product_name: str = Field(min_length=1, max_length=160)
 
 
 class AIAnalysisOut(BaseModel):

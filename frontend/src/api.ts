@@ -1,6 +1,6 @@
 const API_URL = import.meta.env.VITE_API_URL ?? "/api";
 
-export type User = { id: number; email: string; full_name: string; role: "admin" | "manager" | "worker" };
+export type User = { id: number; email: string; full_name: string; role: "admin" | "manager" | "worker" | "accountant" | "customer" };
 export type InventoryItem = {
   id: number; sku: string; name: string; unit: string; quantity: number;
   minimum_quantity: number; unit_cost: number; updated_at: string;
@@ -8,7 +8,7 @@ export type InventoryItem = {
 export type Order = {
   id: number; order_code: string; product_name: string; quantity: number; status: string;
   due_date: string | null; notes: string | null; material_id: number | null; created_at: string;
-  material?: InventoryItem | null;
+  material?: Pick<InventoryItem, "id" | "sku" | "name" | "unit"> | null;
 };
 export type Dashboard = {
   order_count: number; active_order_count: number; completed_order_count: number;

@@ -4,14 +4,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router
+from app.api.operations import router as operations_router
 from app.core.config import settings
-from app.core.database import Base, engine
-from app.models import InventoryItem, ProductionOrder, User
+from app.core.migrations import upgrade_schema
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    Base.metadata.create_all(bind=engine)
+    upgrade_schema()
     yield
 
 
@@ -24,6 +24,7 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 app.include_router(router, prefix="/api")
+app.include_router(operations_router, prefix="/api")
 
 
 @app.get("/health")

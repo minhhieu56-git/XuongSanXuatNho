@@ -6,13 +6,13 @@ Tài liệu này là mẫu ghi nhận minh chứng khi nhóm thực sự dùng c
 
 | Lần | Prompt đã dùng | Phản hồi AI (đường dẫn/ảnh đã ẩn danh) | Phần nhóm giữ/chỉnh sửa | Cách kiểm chứng |
 |---|---|---|---|---|
-| 1 | Chưa ghi nhận trong repository | Chưa có minh chứng | Điền sau khi có prompt thực tế | Đối chiếu quy trình xưởng và rubric |
+| 1 | Yêu cầu đọc báo cáo môn học, trích xuất yêu cầu và đối chiếu repository. | Có bảng actor/FR/NFR/AI/security/test/triển khai trong [REQUIREMENTS_FROM_REPORT.md](./REQUIREMENTS_FROM_REPORT.md). Không lưu API key, dữ liệu nhạy cảm hoặc toàn văn hội thoại. | Nhóm cần xác nhận mâu thuẫn 4/5 role; nội dung được ghi nhận là trích xuất/đối chiếu, không phải quyết định nghiệp vụ cuối cùng. | Đối chiếu nội dung với DOCX trong workspace, model/API/test hiện hành; ghi rõ các tiêu chí chưa đạt/chưa đo. |
 
 ## B. AI hỗ trợ lập trình/review
 
 | Lần | Công cụ và prompt | Phản hồi hoặc thay đổi được hỗ trợ | File/commit | Kiểm tra của sinh viên |
 |---|---|---|---|---|
-| 1 | Chưa ghi nhận trong repository | Chưa có minh chứng | Điền sau khi nhóm sử dụng | Chạy test, review code, kiểm tra phân quyền và dữ liệu biên |
+| 1 | Phiên Copilot SDK trong VS Code: yêu cầu tiếp tục triển khai backend/API, RBAC 5 role, AI privacy/safety, giao diện React, test và tài liệu theo báo cáo. | Đã hỗ trợ mở rộng entity/API/UI, migration additive, test workflow và tìm lỗi timezone/response trong lúc chạy test. Không coi đây là review độc lập hoặc chứng nhận bảo mật. | Các thay đổi hiện nằm local; chưa commit. Xem các file nguồn ở README và [REQUIREMENTS_FROM_REPORT.md](./REQUIREMENTS_FROM_REPORT.md). | 25 API tests pass; Python compile pass; frontend production build pass; migration/role/seed smoke test trên PostgreSQL 16 pass. Sinh viên cần tự đọc diff, kiểm tra nghiệp vụ và xác nhận từng kết quả trước khi nghiệm thu. |
 
 ## C. Kế hoạch tối ưu prompt Gemini (chưa phải kết quả thử nghiệm)
 
@@ -22,4 +22,11 @@ Tài liệu này là mẫu ghi nhận minh chứng khi nhóm thực sự dùng c
 | 2 — grounding | Yêu cầu trích SKU/mã đơn cụ thể cho mỗi nhận định và nói rõ trường dữ liệu làm căn cứ | So sánh lỗi khẳng định không có căn cứ với vòng 1 |
 | 3 — structured output | Yêu cầu JSON có `summary`, `observations`, `recommendations`, `limitations`; validate trước khi render | Đo tỷ lệ parse thành công, nội dung đủ trường và chất lượng tư vấn |
 
-**Trạng thái:** API tích hợp trong code; chưa xác nhận gọi Gemini thật và chưa có kết quả ba vòng vì repository chưa được cung cấp API key/dữ liệu chạy. Nhóm cần điền thời điểm, model, input đã ẩn danh, output, lỗi, điểm đánh giá và quyết định sau mỗi vòng trước khi trình bày như minh chứng thực nghiệm.
+**Trạng thái:** Ba vòng trên vẫn là kế hoạch; chưa có bảng so sánh định lượng hoặc kết quả thử nghiệm tái lập. Tóm tắt phiên trước trong lịch sử workspace ghi nhận một lần gọi Gemini `gemini-3.5-flash-lite` trả thành công; không có log request/response và latency có thể kiểm chứng kèm theo. Phiên hoàn thiện gần đây dùng mock cho API AI, chưa gọi Gemini thật. Không tuyên bố đã hoàn thành tối ưu 3 vòng.
+
+## D. Kiểm chứng AI trong phiên hoàn thiện
+
+- **Prompt kiểm thử:** Gửi câu hỏi nghiệp vụ có email, số điện thoại, họ tên/địa chỉ gắn nhãn và số định danh; kiểm tra payload Gemini mock không chứa các chuỗi nguyên bản hoặc `unit_cost`.
+- **Kết quả quan sát:** Test xác nhận các mẫu đó được thay bằng `[REDACTED]`, `unit_cost`/giá vốn không nằm trong payload; prompt jailbreak tiếng Anh/Việt mẫu bị trả HTTP 422; payload vượt giới hạn bị từ chối.
+- **Giới hạn:** Đây là test regex trên ví dụ xác định, không phải đánh giá NER/DLP tổng quát hay đo ngưỡng chặn ≥95%/mask 100%. Không gửi API key thật hoặc PII thật trong test.
+- **Code liên quan:** [gemini.py](../backend/app/services/gemini.py), [operations_system.txt](../backend/app/prompts/operations_system.txt), các task prompt trong `backend/app/prompts/`, và [test_api.py](../backend/tests/test_api.py).
