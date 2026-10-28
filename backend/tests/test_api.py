@@ -1,4 +1,5 @@
 import pytest
+import httpx
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -227,3 +228,41 @@ def test_local_ai_analysis_reports_low_stock_items(client: TestClient, monkeypat
     assert response.status_code == 200
     assert "Thép thiếu tồn (MAT-LOW)" in response.json()["answer"]
     assert "thiếu ít nhất 8 kg" in response.json()["answer"]
+
+
+@pytest.mark.parametrize(
+    ("provider_status", "expected_status", "expected_detail"),
+    [
+        (404, 502, "GEMINI_MODEL"),
+        (503, 503, "quá tải"),
+    ],
+)
+def test_ai_reports_actionable_gemini_errors(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    provider_status: int,
+    expected_status: int,
+    expected_detail: str,
+) -> None:
+    monkeypatch.setattr("app.services.gemini.settings.gemini_api_key", "test-key")
+
+    async def fake_post(self, url, *, params, json):
+        request = httpx.Request("POST", url)
+        return httpx.Response(
+            provider_status,
+            request=request,
+            json={"error": {"status": "MODEL_ERROR", "message": "provider detail"}},
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    token = client.post(
+        "/api/auth/login",
+        json={"email": "admin@example.com", "password": "ChangeMe123!"},
+    ).json()["access_token"]
+    response = client.post(
+        "/api/ai/analysis",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"question": "Tóm tắt tình hình kho hiện tại."},
+    )
+    assert response.status_code == expected_status
+    assert expected_detail in response.json()["detail"]

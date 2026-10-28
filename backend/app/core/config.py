@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     jwt_secret: str = "development-only-change-me"
     access_token_expire_minutes: int = 60
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-3.5-flash-lite"
     frontend_origins: str = "http://localhost:5173"
 
     model_config = SettingsConfigDict(env_file=PROJECT_ROOT / ".env", extra="ignore")

@@ -46,7 +46,7 @@ Yêu cầu: Python 3.11+, Node.js 20+, Docker Desktop.
 ### Phân tích AI
 
 - Không có Gemini API key: chức năng vẫn phân tích nội bộ các mặt hàng dưới ngưỡng tồn và đơn chưa hoàn tất bằng quy tắc xác định. Kết quả ghi rõ đây không phải phản hồi Gemini.
-- Muốn dùng mô hình Gemini: tạo API key riêng, thêm `GEMINI_API_KEY=<key-cua-ban>` vào `.env` ở thư mục gốc, rồi dừng và chạy lại backend. Không chia sẻ API key trong chat hoặc đưa `.env` lên Git.
+- Muốn dùng mô hình Gemini: tạo API key riêng, thêm `GEMINI_API_KEY=<key-cua-ban>` vào `.env` ở thư mục gốc, rồi dừng và chạy lại backend. Model mặc định là `gemini-3.5-flash-lite`; có thể đổi bằng `GEMINI_MODEL` nếu model đó được cấp cho API key của bạn. Không chia sẻ API key trong chat hoặc đưa `.env` lên Git.
 
 5. Chạy kiểm thử backend:
 

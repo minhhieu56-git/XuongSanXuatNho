@@ -156,6 +156,12 @@ async def analyze_operations(db: Session, question: str) -> dict[str, object]:
     except httpx.TimeoutException as exc:
         raise HTTPException(504, "Gemini phản hồi quá thời gian cho phép.") from exc
     except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (500, 502, 503, 504):
+            raise HTTPException(503, "Gemini đang quá tải hoặc tạm thời không khả dụng. Vui lòng thử lại sau.") from exc
+        if exc.response.status_code in (401, 403):
+            raise HTTPException(502, "Gemini từ chối API key. Kiểm tra key và quyền truy cập Gemini API.") from exc
+        if exc.response.status_code in (400, 404):
+            raise HTTPException(502, "Model Gemini hoặc cấu hình yêu cầu không còn khả dụng. Kiểm tra GEMINI_MODEL.") from exc
         raise HTTPException(502, "Không thể kết nối dịch vụ Gemini. Hãy kiểm tra cấu hình và thử lại.") from exc
     except (httpx.HTTPError, ValueError) as exc:
         raise HTTPException(502, "Phản hồi Gemini không hợp lệ hoặc không thể truy cập dịch vụ.") from exc
